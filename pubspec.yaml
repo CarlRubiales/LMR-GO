@@ -1,0 +1,34 @@
+name: flutter_app
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  image_picker: ^1.2.3
+  package_info_plus: ^10.2.1
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+# To use local assets or fonts, declare them below this section.
+# assets:
+#   - images/example.png
+# fonts:
+#   - family: Example
+#     fonts:
+#       - asset: fonts/Example-Regular.ttf
