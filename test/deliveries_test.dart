@@ -89,6 +89,37 @@ void main() {
       expect(restored.status, payload.status);
       expect(restored.codAmount, payload.codAmount);
     });
+
+    test('DeliveryRequest deserializes live ERP parcel payload with fallbacks', () {
+      final erpPayload = {
+        'id': '#1001',
+        'db_id': 1,
+        'parcel_number': '#1001',
+        'tracking_code': '#1001',
+        'tracking_number': 'LM-TRK-000001',
+        'barcode': '',
+        'store': 'Lumora Express Hub',
+        'pickup': 'Sorting Bin B-03',
+        'dropoff': '45 Rizal Ave, Manila',
+        'destination_area': 'Area A — Santa Cruz',
+        'status': 'rider_received',
+        'recipient_name': 'Juan Dela Cruz',
+        'recipient_phone': '09171234567',
+        'cod_amount': 350.0,
+        'is_cod': true,
+        'stop_order': 2,
+      };
+
+      final parcel = DeliveryRequest.fromJson(erpPayload);
+      expect(parcel.id, '#1001');
+      expect(parcel.barcode, '#1001'); // fallback from empty barcode
+      expect(parcel.area, 'Area A — Santa Cruz');
+      expect(parcel.stage, DeliveryStage.pickedUp); // mapped from rider_received
+      expect(parcel.recipientName, 'Juan Dela Cruz');
+      expect(parcel.isCod, true);
+      expect(parcel.codAmount, 350.0);
+      expect(parcel.stopOrder, 2);
+    });
   });
 
   group('Offline Queue Service Tests', () {

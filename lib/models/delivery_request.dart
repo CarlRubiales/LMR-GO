@@ -130,9 +130,9 @@ class DeliveryRequest {
 
   factory DeliveryRequest.fromJson(Map<String, dynamic> json) {
     DeliveryStage stage = DeliveryStage.accepted;
-    final stageStr = (json['stage'] ?? json['status'] ?? '').toString().toLowerCase();
+    final stageStr = (json['stage'] ?? json['status'] ?? json['status_code'] ?? '').toString().toLowerCase();
 
-    if (stageStr == 'pickedup' || stageStr == 'sorted' || stageStr == 'pickup_hub') {
+    if (stageStr == 'pickedup' || stageStr == 'picked_up' || stageStr == 'picked_up_from_hub' || stageStr == 'rider_received' || stageStr == 'sorted' || stageStr == 'pickup_hub') {
       stage = DeliveryStage.pickedUp;
     } else if (stageStr == 'out_for_delivery' || stageStr == 'outfordelivery' || stageStr == 'in_transit') {
       stage = DeliveryStage.outForDelivery;
@@ -142,7 +142,7 @@ class DeliveryRequest {
       stage = DeliveryStage.delivered;
     } else if (stageStr == 'completed') {
       stage = DeliveryStage.completed;
-    } else if (stageStr == 'failed' || stageStr == 'delivery_failed') {
+    } else if (stageStr == 'failed' || stageStr == 'delivery_failed' || stageStr == 'exception') {
       stage = DeliveryStage.failed;
     } else if (stageStr == 'rescheduled') {
       stage = DeliveryStage.rescheduled;
@@ -157,21 +157,26 @@ class DeliveryRequest {
         : 0.0;
     final isCodVal = json['is_cod'] == true || codVal > 0;
 
+    final rawBarcode = json['barcode']?.toString();
+    final barcodeVal = (rawBarcode != null && rawBarcode.trim().isNotEmpty)
+        ? rawBarcode.trim()
+        : (json['parcel_number']?.toString() ?? json['id']?.toString() ?? '');
+
     return DeliveryRequest(
-      id: json['id']?.toString() ?? '',
+      id: json['id']?.toString() ?? json['parcel_number']?.toString() ?? '',
       store: json['store']?.toString() ?? 'Central Hub',
       pickup: json['pickup']?.toString() ?? 'Hub Sorting Bin',
-      dropoff: json['dropoff']?.toString() ?? '',
+      dropoff: json['dropoff']?.toString() ?? json['address']?.toString() ?? '',
       fee: json['fee']?.toString() ?? '₱150.00',
       distance: json['distance']?.toString() ?? '3.5 km',
       eta: json['eta']?.toString() ?? '25 min',
       stage: stage,
-      recipientName: json['recipient_name']?.toString() ?? json['recipientName']?.toString(),
-      recipientPhone: json['recipient_phone']?.toString() ?? json['recipientPhone']?.toString(),
-      trackingNumber: json['tracking_number']?.toString(),
-      barcode: json['barcode']?.toString() ?? json['id']?.toString(),
-      area: json['area']?.toString(),
-      landmark: json['landmark']?.toString(),
+      recipientName: json['recipient_name']?.toString() ?? json['recipientName']?.toString() ?? 'Receiver',
+      recipientPhone: json['recipient_phone']?.toString() ?? json['recipientPhone']?.toString() ?? '',
+      trackingNumber: json['tracking_number']?.toString() ?? json['tracking_code']?.toString(),
+      barcode: barcodeVal,
+      area: json['area']?.toString() ?? json['destination_area']?.toString(),
+      landmark: json['landmark']?.toString() ?? json['notes']?.toString(),
       codAmount: codVal,
       isCod: isCodVal,
       stopOrder: int.tryParse(json['stop_order']?.toString() ?? '1') ?? 1,

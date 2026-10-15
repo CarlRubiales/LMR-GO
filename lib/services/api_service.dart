@@ -136,28 +136,7 @@ class ApiService {
     throw lastException ?? Exception('Cannot connect to server at $baseUrl');
   }
 
-  /// Low-level PATCH request with automatic fallback
-  Future<http.Response> _patch(String path, {dynamic body, Duration timeout = const Duration(seconds: 3)}) async {
-    final candidates = [_workingBaseUrl, ...candidateBaseUrls].whereType<String>().toSet().toList();
-    Exception? lastException;
 
-    for (final base in candidates) {
-      try {
-        final res = await http
-            .patch(
-              Uri.parse('$base$path'),
-              headers: _headers,
-              body: body != null ? jsonEncode(body) : null,
-            )
-            .timeout(timeout);
-        _workingBaseUrl = base;
-        return res;
-      } on Exception catch (e) {
-        lastException = e;
-      }
-    }
-    throw lastException ?? Exception('Cannot connect to server at $baseUrl');
-  }
 
   /// Test connectivity to a target URL or the current baseUrl
   Future<bool> testConnection([String? url]) async {
@@ -285,8 +264,8 @@ class ApiService {
   }
 
   /// Get deliveries assigned to this rider
-  Future<List<DeliveryRequest>> getAssignedDeliveries() async {
-    if (!isAuthenticated) return [];
+  Future<List<DeliveryRequest>?> getAssignedDeliveries() async {
+    if (!isAuthenticated) return null;
     try {
       final res = await _get('/rider/deliveries');
       if (res.statusCode == 200) {
@@ -295,7 +274,7 @@ class ApiService {
         return list.map((item) => DeliveryRequest.fromJson(item as Map<String, dynamic>)).toList();
       }
     } catch (_) {}
-    return [];
+    return null;
   }
 
   /// Get available parcels ready for pickup
@@ -315,8 +294,9 @@ class ApiService {
   /// Accept a delivery
   Future<DeliveryRequest?> acceptDelivery(String id) async {
     try {
-      final res = await _post('/rider/deliveries/$id/accept');
-      if (res.statusCode == 200) {
+      final cleanId = Uri.encodeComponent(id.replaceAll('#', ''));
+      final res = await _post('/rider/deliveries/$cleanId/accept');
+      if (res.statusCode >= 200 && res.statusCode < 300) {
         final data = jsonDecode(res.body);
         if (data['data'] != null) {
           return DeliveryRequest.fromJson(data['data'] as Map<String, dynamic>);
@@ -329,11 +309,12 @@ class ApiService {
   /// Update delivery status (pickedUp or delivered)
   Future<DeliveryRequest?> updateDeliveryStatus(String id, DeliveryStage stage) async {
     try {
-      final res = await _patch(
-        '/rider/deliveries/$id/status',
+      final cleanId = Uri.encodeComponent(id.replaceAll('#', ''));
+      final res = await _post(
+        '/rider/deliveries/$cleanId/status',
         body: {'stage': stage.name},
       );
-      if (res.statusCode == 200) {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
         final data = jsonDecode(res.body);
         if (data['data'] != null) {
           return DeliveryRequest.fromJson(data['data'] as Map<String, dynamic>);
@@ -346,10 +327,11 @@ class ApiService {
   /// Sync standardized status payload with backend
   Future<bool> syncStatusPayload(DeliveryStatusPayload payload) async {
     try {
+      final cleanId = Uri.encodeComponent(payload.parcelId.replaceAll('#', ''));
       final res = await _post(
-        '/rider/deliveries/${payload.parcelId}/status',
+        '/rider/deliveries/$cleanId/status',
         body: payload.toJson(),
-        timeout: const Duration(seconds: 4),
+        timeout: const Duration(seconds: 5),
       );
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {

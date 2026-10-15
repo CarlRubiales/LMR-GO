@@ -48,11 +48,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _parcels = List<DeliveryRequest>.from(MockBackend().parcelsNotifier.value)
+      ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
+    _isLoading = false;
+    MockBackend().parcelsNotifier.addListener(_onParcelsChanged);
+    MockBackend().startAutoSync();
     _refreshParcels();
   }
 
+  void _onParcelsChanged() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final sorted = List<DeliveryRequest>.from(MockBackend().parcelsNotifier.value)
+          ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
+        setState(() {
+          _parcels = sorted;
+          _isLoading = false;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    MockBackend().parcelsNotifier.removeListener(_onParcelsChanged);
+    super.dispose();
+  }
+
   Future<void> _refreshParcels() async {
-    setState(() => _isLoading = true);
     final data = await MockBackend().getTodayRunParcels();
     final sorted = List<DeliveryRequest>.from(data)
       ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
@@ -177,6 +201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AppPage(
       title: "Today's Run",
       subtitle: 'Central Sorting Hub · Last-Mile Delivery Manifest',
+      onRefresh: _refreshParcels,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

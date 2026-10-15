@@ -44,6 +44,11 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
   @override
   void initState() {
     super.initState();
+    _allParcels = List<DeliveryRequest>.from(MockBackend().parcelsNotifier.value)
+      ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
+    _isLoading = false;
+    MockBackend().parcelsNotifier.addListener(_onParcelsChanged);
+    MockBackend().startAutoSync();
     _loadParcels();
     _searchController.addListener(() {
       setState(() {
@@ -52,14 +57,28 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
     });
   }
 
+  void _onParcelsChanged() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final sorted = List<DeliveryRequest>.from(MockBackend().parcelsNotifier.value)
+          ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
+        setState(() {
+          _allParcels = sorted;
+          _isLoading = false;
+        });
+      }
+    });
+  }
+
   @override
   void dispose() {
+    MockBackend().parcelsNotifier.removeListener(_onParcelsChanged);
     _searchController.dispose();
     super.dispose();
   }
 
   Future<void> _loadParcels() async {
-    setState(() => _isLoading = true);
     final parcels = await MockBackend().getTodayRunParcels();
     // Sort in route order (nearest-next)
     final sorted = List<DeliveryRequest>.from(parcels)
@@ -190,6 +209,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
     return AppPage(
       title: 'Deliveries',
       subtitle: 'Manage your route, stops & proof of delivery',
+      onRefresh: _loadParcels,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -377,7 +397,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Toggle between List and Route Map View
+              // Refresh and Toggle between List and Route Map View
               Container(
                 height: 42,
                 decoration: BoxDecoration(
@@ -387,6 +407,15 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                 ),
                 child: Row(
                   children: [
+                    IconButton(
+                      tooltip: 'Refresh parcels',
+                      icon: const Icon(
+                        Icons.refresh_rounded,
+                        size: 20,
+                        color: AppColors.plum,
+                      ),
+                      onPressed: _loadParcels,
+                    ),
                     IconButton(
                       tooltip: 'List view',
                       icon: Icon(

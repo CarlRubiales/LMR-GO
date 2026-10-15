@@ -9,15 +9,20 @@ class AppPage extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.onRefresh,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
+    Widget content = SingleChildScrollView(
+      physics: onRefresh != null
+          ? const AlwaysScrollableScrollPhysics()
+          : null,
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
       child: Center(
         child: ConstrainedBox(
@@ -62,25 +67,36 @@ class AppPage extends StatelessWidget {
                       ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: () {
-                      showDialog<void>(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          title: const Text('Notifications'),
-                          content: const Text(
-                            'You have one new delivery request.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Close'),
-                            ),
-                          ],
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (onRefresh != null)
+                        IconButton(
+                          tooltip: 'Refresh',
+                          onPressed: () => onRefresh!(),
+                          icon: const Icon(Icons.refresh_rounded, color: AppColors.plum),
                         ),
-                      );
-                    },
-                    icon: const Icon(Icons.notifications_none, color: AppColors.plum),
+                      IconButton(
+                        onPressed: () {
+                          showDialog<void>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('Notifications'),
+                              content: const Text(
+                                'You have one new delivery request.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Close'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.notifications_none, color: AppColors.plum),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -91,6 +107,17 @@ class AppPage extends StatelessWidget {
         ),
       ),
     );
+
+    if (onRefresh != null) {
+      content = RefreshIndicator(
+        color: AppColors.plum,
+        backgroundColor: AppColors.cream,
+        onRefresh: onRefresh!,
+        child: content,
+      );
+    }
+
+    return content;
   }
 }
 

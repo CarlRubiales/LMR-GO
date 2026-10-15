@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+
 import '../models/delivery_request.dart';
 import '../models/delivery_status.dart';
 import 'api_service.dart';
@@ -103,6 +106,32 @@ class MockBackend {
   ];
 
   final List<DeliveryRequest> _runtimeParcels = List<DeliveryRequest>.from(_defaultParcels);
+  final ValueNotifier<List<DeliveryRequest>> parcelsNotifier =
+      ValueNotifier<List<DeliveryRequest>>(List<DeliveryRequest>.unmodifiable(_defaultParcels));
+
+  Timer? _autoSyncTimer;
+
+  void startAutoSync({Duration interval = const Duration(seconds: 4)}) {
+    if (!ApiService.instance.isAuthenticated) return;
+    if (_autoSyncTimer != null && _autoSyncTimer!.isActive) return;
+    _autoSyncTimer = Timer.periodic(interval, (_) async {
+      if (ApiService.instance.isAuthenticated) {
+        await getTodayRunParcels();
+        await OfflineQueueService.instance.flushQueue();
+      }
+    });
+  }
+
+  void stopAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+  }
+
+  void reset() {
+    _runtimeParcels.clear();
+    _runtimeParcels.addAll(_defaultParcels);
+    parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+  }
 
   static const Map<String, String> _defaultEarnings = {
     'today': '₱1,860.00',
@@ -136,8 +165,36 @@ class MockBackend {
     if (ApiService.instance.isAuthenticated) {
       try {
         final apiDeliveries = await ApiService.instance.getAssignedDeliveries();
-        if (apiDeliveries.isNotEmpty) {
-          return apiDeliveries;
+        if (apiDeliveries != null) {
+          final updatedList = <DeliveryRequest>[];
+          for (int i = 0; i < apiDeliveries.length; i++) {
+            final item = apiDeliveries[i];
+            final localIdx = _runtimeParcels.indexWhere((p) =>
+                p.id == item.id ||
+                p.barcode == item.barcode ||
+                p.trackingNumber == item.trackingNumber);
+            if (localIdx != -1) {
+              final local = _runtimeParcels[localIdx];
+              updatedList.add(item.copyWith(
+                stage: local.stage,
+                failureReason: local.failureReason ?? item.failureReason,
+                failureNotes: local.failureNotes ?? item.failureNotes,
+                podPhotoPath: local.podPhotoPath ?? item.podPhotoPath,
+                podSignature: local.podSignature ?? item.podSignature,
+                podOtp: local.podOtp ?? item.podOtp,
+                stopOrder: item.stopOrder > 0 ? item.stopOrder : i + 1,
+              ));
+            } else {
+              updatedList.add(item.copyWith(
+                stopOrder: item.stopOrder > 0 ? item.stopOrder : i + 1,
+              ));
+            }
+          }
+          _runtimeParcels.clear();
+          _runtimeParcels.addAll(updatedList);
+          final readonlyList = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+          parcelsNotifier.value = readonlyList;
+          return readonlyList;
         }
       } catch (_) {}
     }
@@ -160,20 +217,26 @@ class MockBackend {
     String? podOtp,
     double? codAmountCollected,
   }) async {
-    final idx = _runtimeParcels.indexWhere((p) => p.id == parcelId || p.barcode == parcelId);
+    final idx = _runtimeParcels.indexWhere((p) =>
+        p.id == parcelId ||
+        p.barcode == parcelId ||
+        p.trackingNumber == parcelId ||
+        p.id == '#$parcelId' ||
+        parcelId == '#${p.id}');
     if (idx != -1) {
       final existing = _runtimeParcels[idx];
       _runtimeParcels[idx] = existing.copyWith(
         stage: newStage,
-        failureReason: failureReason,
-        failureNotes: failureNotes,
-        podPhotoPath: podPhotoPath,
-        podSignature: podSignature,
-        podOtp: podOtp,
+        failureReason: failureReason ?? existing.failureReason,
+        failureNotes: failureNotes ?? existing.failureNotes,
+        podPhotoPath: podPhotoPath ?? existing.podPhotoPath,
+        podSignature: podSignature ?? existing.podSignature,
+        podOtp: podOtp ?? existing.podOtp,
         deliveredAt: (newStage == DeliveryStage.delivered || newStage == DeliveryStage.completed)
             ? DateTime.now()
             : existing.deliveredAt,
       );
+      parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
     }
 
     final riderId = ApiService.instance.currentUser?['id']?.toString() ?? 'RIDER-01';
@@ -195,6 +258,7 @@ class MockBackend {
 
     if (ApiService.instance.isAuthenticated) {
       try {
+        await ApiService.instance.syncStatusPayload(payload);
         await ApiService.instance.updateDeliveryStatus(parcelId, newStage);
       } catch (_) {}
     }

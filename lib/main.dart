@@ -15,6 +15,7 @@ import 'screens/login_screen.dart';
 import 'screens/registration_screen.dart';
 import 'services/api_service.dart';
 import 'services/mock_backend.dart';
+import 'services/offline_queue_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,7 +50,7 @@ class RiderShell extends StatefulWidget {
   State<RiderShell> createState() => _RiderShellState();
 }
 
-class _RiderShellState extends State<RiderShell> {
+class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
   int tab = 0;
   bool available = true;
   bool registered = false;
@@ -64,9 +65,24 @@ class _RiderShellState extends State<RiderShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     login = widget.startAtLogin;
     signedOut = widget.startAtLogin;
     _syncAccount();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && ApiService.instance.isAuthenticated) {
+      MockBackend().getTodayRunParcels();
+      OfflineQueueService.instance.flushQueue();
+    }
   }
 
   void _syncAccount() {
@@ -89,6 +105,8 @@ class _RiderShellState extends State<RiderShell> {
 
   void logout() {
     ApiService.instance.logout();
+    MockBackend().stopAutoSync();
+    MockBackend().reset();
     Navigator.of(context).popUntil((route) => route.isFirst);
     setState(() {
       account = RiderAccount();
@@ -195,6 +213,8 @@ class _RiderShellState extends State<RiderShell> {
             signedOut = false;
             tab = 0;
           });
+          MockBackend().getTodayRunParcels();
+          MockBackend().startAutoSync();
         },
         onRegister: () {
           setState(() {
@@ -250,7 +270,12 @@ class _RiderShellState extends State<RiderShell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tab,
-        onDestinationSelected: (value) => setState(() => tab = value),
+        onDestinationSelected: (value) {
+          setState(() => tab = value);
+          if (value == 0 || value == 1) {
+            MockBackend().getTodayRunParcels();
+          }
+        },
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.home_outlined),
