@@ -193,6 +193,8 @@ class ApiService {
     String? phone,
     String? vehicleType,
     String? licenseNumber,
+    String? licensePhoto,
+    String? orCrPhoto,
   }) async {
     final response = await _post(
       '/rider/register',
@@ -203,8 +205,10 @@ class ApiService {
         'phone': ?phone,
         'vehicle_type': ?vehicleType,
         'license_number': ?licenseNumber,
+        'license_photo': ?licensePhoto,
+        'or_cr_photo': ?orCrPhoto,
       },
-      timeout: const Duration(seconds: 6),
+      timeout: const Duration(seconds: 15),
     );
 
     final data = jsonDecode(response.body);

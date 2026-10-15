@@ -9,6 +9,7 @@ import '../widgets/app_page.dart';
 import '../widgets/eod_return_sheet.dart';
 import '../widgets/hub_pickup_sheet.dart';
 import '../widgets/parcel_card.dart';
+import '../widgets/parcel_scanner_sheet.dart';
 import '../widgets/route_map_view.dart';
 import '../widgets/stop_details_sheet.dart';
 
@@ -171,6 +172,22 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
     );
   }
 
+  void _openBarcodeScanner({DeliveryRequest? target}) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ParcelScannerSheet(
+        targetParcel: target,
+        availableParcels: _allParcels,
+        onParcelScanned: (scanned) {
+          _loadParcels();
+        },
+        onDone: _loadParcels,
+      ),
+    );
+  }
+
   void _openHubPickup() {
     final toLoad = _allParcels.where((p) => p.stage == DeliveryStage.accepted).toList();
     showModalBottomSheet<void>(
@@ -309,17 +326,17 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                 const SizedBox(width: 6),
                 if (toLoadCount > 0)
                   FilledButton.icon(
-                    onPressed: _openHubPickup,
+                    onPressed: () => _openBarcodeScanner(),
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.plum,
-                      foregroundColor: AppColors.cream,
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       minimumSize: const Size(0, 36),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                     icon: const Icon(Icons.qr_code_scanner, size: 14),
                     label: Text(
-                      'Load Parcels',
+                      'Scan to Pick Up',
                       style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800),
                     ),
                   )
@@ -434,6 +451,15 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                       ),
                       onPressed: () => setState(() => _isMapView = true),
                     ),
+                    IconButton(
+                      tooltip: 'Scan parcel barcode',
+                      icon: const Icon(
+                        Icons.qr_code_scanner,
+                        size: 20,
+                        color: AppColors.orange,
+                      ),
+                      onPressed: () => _openBarcodeScanner(),
+                    ),
                   ],
                 ),
               ),
@@ -500,6 +526,10 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                   return ParcelCard(
                     parcel: parcel,
                     onTap: () => _openStopDetails(parcel),
+                    actionLabel: parcel.stage == DeliveryStage.accepted ? 'Scan' : null,
+                    onAction: parcel.stage == DeliveryStage.accepted
+                        ? () => _openBarcodeScanner(target: parcel)
+                        : null,
                   );
                 }).toList(),
               ),

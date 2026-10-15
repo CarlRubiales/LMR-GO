@@ -6,6 +6,7 @@ import 'package:flutter_app/models/delivery_status.dart';
 import 'package:flutter_app/screens/deliveries_screen.dart';
 import 'package:flutter_app/services/offline_queue_service.dart';
 import 'package:flutter_app/widgets/hub_pickup_sheet.dart';
+import 'package:flutter_app/widgets/parcel_scanner_sheet.dart';
 import 'package:flutter_app/widgets/stop_details_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -266,6 +267,57 @@ void main() {
       expect(find.text('Mark Out for Delivery'), findsOneWidget);
       expect(find.text('Message hub about this parcel'), findsOneWidget);
     });
+
+    testWidgets('ParcelScannerSheet scans assigned barcode and transitions to Picked Up', (tester) async {
+      tester.view.physicalSize = const Size(420, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const testParcel = DeliveryRequest(
+        id: 'LMR-99001',
+        store: 'Shopee Hub Bin A-1',
+        pickup: 'Bin A-1',
+        dropoff: '456 Rizal St, Manila',
+        fee: '₱85',
+        distance: '1.8 km',
+        eta: '10m',
+        recipientName: 'Juan Dela Cruz',
+        barcode: 'BARCODE-99001',
+        trackingNumber: 'TRK-99001',
+        stage: DeliveryStage.accepted,
+      );
+
+      DeliveryRequest? scannedResult;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: ParcelScannerSheet(
+              availableParcels: const [testParcel],
+              onParcelScanned: (p) => scannedResult = p,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('PARCEL BARCODE SCANNER'), findsOneWidget);
+
+      // Simulate barcode scanner gun / keyboard entry
+      await tester.enterText(find.byType(TextField), 'BARCODE-99001');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(scannedResult, isNotNull);
+      expect(scannedResult!.id, 'LMR-99001');
+      expect(scannedResult!.stage, DeliveryStage.pickedUp);
+      expect(find.text('✓ Scanned & Status Updated to Picked Up!'), findsOneWidget);
+    });
   });
 }
+
 

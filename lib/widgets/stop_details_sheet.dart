@@ -7,6 +7,7 @@ import '../models/delivery_status.dart';
 import '../services/mock_backend.dart';
 import '../theme/app_colors.dart';
 import 'failed_delivery_sheet.dart';
+import 'parcel_scanner_sheet.dart';
 import 'pod_sheet.dart';
 
 class StopDetailsSheet extends StatefulWidget {
@@ -132,6 +133,23 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
         ),
       );
     }
+  }
+
+  void _openBarcodeScanner() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ParcelScannerSheet(
+        targetParcel: _currentParcel,
+        onParcelScanned: (updated) {
+          setState(() {
+            _currentParcel = updated;
+          });
+          widget.onStatusChanged();
+        },
+      ),
+    );
   }
 
   void _openPod() {
@@ -469,9 +487,27 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('Tracking Barcode', style: GoogleFonts.inter(fontSize: 12, color: AppColors.muted)),
-                          Text(
-                            _currentParcel.barcode ?? _currentParcel.id,
-                            style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.plum),
+                          InkWell(
+                            onTap: _openBarcodeScanner,
+                            borderRadius: BorderRadius.circular(6),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _currentParcel.barcode ?? _currentParcel.id,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.plum,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.qr_code_scanner, size: 14, color: AppColors.orange),
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -552,8 +588,52 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
   Widget _buildLifecycleActions() {
     final stage = _currentParcel.stage;
 
-    // Stage 1: Accepted or Picked up at hub -> "Mark Out for Delivery"
-    if (stage == DeliveryStage.accepted || stage == DeliveryStage.pickedUp) {
+    // Stage 1A: Assigned at hub (not yet picked up) -> "Scan Barcode to Pick Up"
+    if (stage == DeliveryStage.accepted) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton.icon(
+              onPressed: _openBarcodeScanner,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.qr_code_scanner, size: 20),
+              label: Text(
+                'Scan Barcode to Pick Up',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 42,
+            child: OutlinedButton.icon(
+              onPressed: _markOutForDelivery,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.plum,
+                side: const BorderSide(color: AppColors.plum),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.navigation_outlined, size: 18),
+              label: Text(
+                'Mark Out for Delivery',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Stage 1B: Picked up at hub -> "Mark Out for Delivery"
+    if (stage == DeliveryStage.pickedUp) {
       return SizedBox(
         width: double.infinity,
         height: 52,

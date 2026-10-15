@@ -316,6 +316,8 @@ class MockBackend {
         phone: payload['phone'],
         vehicleType: payload['vehicle'],
         licenseNumber: payload['license_number'],
+        licensePhoto: payload['license_photo'],
+        orCrPhoto: payload['or_cr_photo'],
       );
     }
   }

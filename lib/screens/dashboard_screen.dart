@@ -9,6 +9,7 @@ import '../widgets/app_page.dart';
 import '../widgets/eod_return_sheet.dart';
 import '../widgets/hub_pickup_sheet.dart';
 import '../widgets/parcel_card.dart';
+import '../widgets/parcel_scanner_sheet.dart';
 import '../widgets/stop_details_sheet.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -131,6 +132,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             widget.onTab(2);
           }
         },
+      ),
+    );
+  }
+
+  void _openBarcodeScanner({DeliveryRequest? target}) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ParcelScannerSheet(
+        targetParcel: target,
+        availableParcels: _parcels,
+        onParcelScanned: (scanned) {
+          _refreshParcels();
+        },
+        onDone: _refreshParcels,
       ),
     );
   }
@@ -629,6 +646,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               (parcel) => ParcelCard(
                 parcel: parcel,
                 onTap: () => _openStopDetails(parcel),
+                actionLabel: parcel.stage == DeliveryStage.accepted ? 'Scan' : null,
+                onAction: parcel.stage == DeliveryStage.accepted
+                    ? () => _openBarcodeScanner(target: parcel)
+                    : null,
               ),
             ),
 
@@ -705,22 +726,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: FilledButton.icon(
-                onPressed: _openHubPickup,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.cream,
-                  foregroundColor: AppColors.plum,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: SizedBox(
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: () => _openBarcodeScanner(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.orange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.qr_code_scanner, size: 18),
+                      label: Text(
+                        'Scan Barcode',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 13.5),
+                      ),
+                    ),
+                  ),
                 ),
-                icon: const Icon(Icons.qr_code_scanner, size: 18),
-                label: Text(
-                  'Go to Hub / Load Parcels',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 13.5),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: _openHubPickup,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white38),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Text(
+                        'Hub Bin List',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),

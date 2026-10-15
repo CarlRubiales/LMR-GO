@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../theme/app_colors.dart';
 import '../services/mock_backend.dart';
@@ -42,6 +44,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   String province = 'Metro Manila';
   String municipality = 'San Juan';
   String barangay = 'Addition Hills';
+
+  String? licensePhotoBase64;
+  String? licensePhotoName;
+  String? orCrPhotoBase64;
+  String? orCrPhotoName;
 
   @override
   void dispose() {
@@ -152,19 +159,105 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     );
   }
 
-  Widget upload(String title) {
+  Future<void> _pickDocument({required bool isLicense}) async {
+    final picker = ImagePicker();
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.cream,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                isLicense ? 'Upload Driver’s License' : 'Upload Vehicle OR / CR',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                  color: AppColors.plum,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined, color: AppColors.orange),
+                title: Text(
+                  'Take Photo with Camera',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: AppColors.plum),
+                ),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined, color: AppColors.orange),
+                title: Text(
+                  'Choose from Gallery',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: AppColors.plum),
+                ),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      final XFile? file = await picker.pickImage(
+        source: source,
+        imageQuality: 70,
+        maxWidth: 1280,
+        maxHeight: 1280,
+      );
+      if (file == null) return;
+
+      final bytes = await file.readAsBytes();
+      final base64String = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+
+      setState(() {
+        if (isLicense) {
+          licensePhotoBase64 = base64String;
+          licensePhotoName = file.name;
+        } else {
+          orCrPhotoBase64 = base64String;
+          orCrPhotoName = file.name;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not attach document: $e'),
+            backgroundColor: AppColors.plum,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget upload(String title, {required bool isLicense}) {
+    final fileName = isLicense ? licensePhotoName : orCrPhotoName;
+    final bool hasFile = fileName != null;
+
     return Card(
-      color: AppColors.cream,
+      color: hasFile ? const Color(0xFFF0FDF4) : AppColors.cream,
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: AppColors.inputBorder, width: 1),
+        side: BorderSide(
+          color: hasFile ? const Color(0xFF86EFAC) : AppColors.inputBorder,
+          width: 1,
+        ),
       ),
       child: ListTile(
-        leading: const Icon(
-          Icons.file_upload_outlined,
-          color: AppColors.orange,
+        leading: Icon(
+          hasFile ? Icons.check_circle : Icons.file_upload_outlined,
+          color: hasFile ? const Color(0xFF16A34A) : AppColors.orange,
         ),
         title: Text(
           title,
@@ -175,14 +268,36 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           ),
         ),
         subtitle: Text(
-          'PDF, JPG or PNG · Max 10 MB',
-          style: GoogleFonts.inter(color: AppColors.muted, fontSize: 10),
+          hasFile ? 'Selected: $fileName' : 'Camera or Gallery (JPG, PNG) · Max 10 MB',
+          style: GoogleFonts.inter(
+            color: hasFile ? const Color(0xFF16A34A) : AppColors.muted,
+            fontSize: 10,
+            fontWeight: hasFile ? FontWeight.w600 : FontWeight.w400,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        trailing: const Icon(
-          Icons.add_circle_outline,
-          color: AppColors.orange,
-        ),
-        onTap: () {},
+        trailing: hasFile
+            ? IconButton(
+                icon: const Icon(Icons.close, size: 18, color: AppColors.muted),
+                onPressed: () {
+                  setState(() {
+                    if (isLicense) {
+                      licensePhotoBase64 = null;
+                      licensePhotoName = null;
+                    } else {
+                      orCrPhotoBase64 = null;
+                      orCrPhotoName = null;
+                    }
+                  });
+                },
+                tooltip: 'Remove',
+              )
+            : const Icon(
+                Icons.add_circle_outline,
+                color: AppColors.orange,
+              ),
+        onTap: () => _pickDocument(isLicense: isLicense),
       ),
     );
   }
@@ -412,9 +527,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             const SizedBox(height: 12),
             select('Choose vehicle *', vehicle, [
               'Motorcycle',
-              'Bicycle',
-              'Car',
-              'Van',
+              'Tricycle',
             ], (value) => setState(() => vehicle = value!)),
             field(
               'Enter plate number',
@@ -422,8 +535,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               required: true,
               controller: plateController,
             ),
-            upload('Upload OR / CR'),
-            upload('Upload ID / driver’s license'),
+            upload('Upload OR / CR', isLicense: false),
+            upload('Upload ID / driver’s license', isLicense: true),
             const SizedBox(height: 20),
 
             if (registrationError != null) ...[
@@ -488,6 +601,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               'barangay': barangay,
                               'vehicle': vehicle,
                               'license_number': plateController.text.trim(),
+                              'license_photo': ?licensePhotoBase64,
+                              'or_cr_photo': ?orCrPhotoBase64,
                             });
 
                             if (!mounted) return;
