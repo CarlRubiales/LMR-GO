@@ -235,7 +235,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Direct two-way channel connected to Central Sorting Hub staff & dispatch.',
+                    'Direct two-way channel connected to Lumora Sorting Hub staff & dispatch.',
                     style: GoogleFonts.inter(
                       color: AppColors.plum,
                       fontWeight: FontWeight.w600,

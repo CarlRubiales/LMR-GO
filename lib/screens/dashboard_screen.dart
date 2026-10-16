@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../models/delivery_request.dart';
+import '../services/api_service.dart';
 import '../services/mock_backend.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_page.dart';
@@ -106,16 +105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return null;
   }
 
-  Future<void> _launchMaps(String address) async {
-    final query = Uri.encodeComponent('$address, Philippines');
-    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
-    try {
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
-      }
-    } catch (_) {}
-  }
-
   void _openStopDetails(DeliveryRequest parcel) {
     showModalBottomSheet<void>(
       context: context,
@@ -215,9 +204,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final nextStop = _nextStop;
 
+    final parcelAreas = _parcels
+        .map((p) => p.area?.trim() ?? p.deliveryArea.trim())
+        .where((a) => a.isNotEmpty && a != 'Metro Area')
+        .toSet()
+        .toList();
+
+    final dynamic rawAreas = ApiService.instance.currentUser?['assigned_areas'];
+    String? apiAreasText = ApiService.instance.currentUser?['assigned_areas_text']?.toString();
+    if ((apiAreasText == null || apiAreasText.trim().isEmpty) && rawAreas is List && rawAreas.isNotEmpty) {
+      final names = rawAreas
+          .map((a) => a is Map ? (a['name']?.toString() ?? '') : a.toString())
+          .where((n) => n.trim().isNotEmpty)
+          .toList();
+      if (names.isNotEmpty) apiAreasText = names.join(' · ');
+    }
+
+    final String assignedAreasText = (apiAreasText != null && apiAreasText.trim().isNotEmpty)
+        ? apiAreasText.trim()
+        : (parcelAreas.isNotEmpty ? parcelAreas.join(' · ') : 'All Assigned Zones');
+
+    final userRouteCode = ApiService.instance.currentUser?['assigned_route_code']?.toString();
+    final String routeTag = (userRouteCode != null && userRouteCode.trim().isNotEmpty)
+        ? (userRouteCode.toUpperCase().startsWith('ROUTE') ? userRouteCode : 'Route $userRouteCode')
+        : (parcelAreas.isNotEmpty ? 'Route ${parcelAreas.first}' : 'Route Hub');
+
     return AppPage(
       title: "Today's Run",
-      subtitle: 'Central Sorting Hub · Last-Mile Delivery Manifest',
+      subtitle: 'Lumora Sorting Hub · Last-Mile Delivery Manifest',
       onRefresh: _refreshParcels,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,7 +331,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        'Assigned Areas: San Juan · Mandaluyong · Pasig',
+                        'Assigned Areas: $assignedAreasText',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(
@@ -334,7 +348,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        'Route MNL-4',
+                        routeTag,
                         style: GoogleFonts.inter(
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
@@ -704,7 +718,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'CENTRAL SORTING HUB · BAY A-04',
+                        'LUMORA SORTING HUB · BAY A-04',
                         style: GoogleFonts.inter(
                           color: AppColors.blush2,
                           fontSize: 9.5,
@@ -1149,65 +1163,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 12),
 
-          // Action Buttons: Navigate + Stop Details
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _launchMaps(parcel.receiverAddress),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.plum,
-                    side: const BorderSide(color: AppColors.plum),
-                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                    minimumSize: const Size(0, 40),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.navigation_outlined, size: 16),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          'Navigate',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(fontSize: 11.5, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+          // Action Button: Stop Details
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => _openStopDetails(parcel),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.plum,
+                foregroundColor: AppColors.cream,
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                minimumSize: const Size(0, 42),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => _openStopDetails(parcel),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.plum,
-                    foregroundColor: AppColors.cream,
-                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                    minimumSize: const Size(0, 40),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.arrow_forward, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Stop Details',
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.arrow_forward, size: 16),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          'Stop Details',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(fontSize: 11.5, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ],
       ),

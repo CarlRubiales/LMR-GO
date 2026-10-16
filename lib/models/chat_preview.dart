@@ -54,7 +54,7 @@ List<PreviewConversation> createPreviewConversations() {
   return [
     PreviewConversation(
       name: 'Lumora Sorting Center · Hub Staff',
-      description: 'Central Sorting Hub · Dispatch & Staff',
+      description: 'Lumora Sorting Hub · Dispatch & Staff',
       icon: Icons.warehouse_rounded,
       isHubStaff: true,
       unread: 0,
