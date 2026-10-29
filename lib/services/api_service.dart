@@ -30,9 +30,15 @@ class ApiService {
       return list.toSet().toList();
     }
     list.addAll([
-      'http://192.168.86.23/api/v1',      // Apache port 80 proxy (guaranteed open through Windows Firewall on Wi-Fi)
+      'http://127.0.0.1:8000/api/v1',     // Fast USB adb reverse (works 100% when plugged into PC)
+      'http://192.168.137.1/api/v1',      // Laptop Mobile Hotspot Apache port 80 proxy
+      'http://192.168.137.1:8000/api/v1', // Laptop Mobile Hotspot direct Laravel port 8000
+      'http://192.168.86.42/api/v1',      // Current Wi-Fi Apache port 80 proxy
+      'http://192.168.86.42:8000/api/v1', // Current Wi-Fi direct Laravel port 8000 ← ACTIVE
+      'http://172.20.10.4/api/v1',        // Old Wi-Fi / Hotspot Apache port 80 proxy
+      'http://172.20.10.4:8000/api/v1',   // Old Wi-Fi / Hotspot Laravel port 8000
+      'http://192.168.86.23/api/v1',      // Apache port 80 proxy (old Home Wi-Fi)
       'http://192.168.86.23:8000/api/v1', // Wi-Fi LAN IP direct Laravel port 8000
-      'http://127.0.0.1:8000/api/v1',     // Fast USB adb reverse fallback
       'http://10.0.2.2:8000/api/v1',      // Android Emulator loopback
     ]);
     return list.toSet().toList();
@@ -42,7 +48,7 @@ class ApiService {
     if (kIsWeb) return 'http://127.0.0.1:8000/api/v1';
     try {
       if (Platform.isAndroid) {
-        return 'http://192.168.86.23/api/v1';
+        return 'http://192.168.86.42:8000/api/v1';
       }
     } catch (_) {}
     return 'http://127.0.0.1:8000/api/v1';
@@ -97,7 +103,7 @@ class ApiService {
       };
 
   /// Low-level GET request with automatic fallback between Wi-Fi LAN IP and USB reverse
-  Future<http.Response> _get(String path, {Duration timeout = const Duration(seconds: 3)}) async {
+  Future<http.Response> _get(String path, {Duration timeout = const Duration(seconds: 5)}) async {
     final candidates = [_workingBaseUrl, ...candidateBaseUrls].whereType<String>().toSet().toList();
     Exception? lastException;
 
@@ -114,7 +120,7 @@ class ApiService {
   }
 
   /// Low-level POST request with automatic fallback
-  Future<http.Response> _post(String path, {dynamic body, Duration timeout = const Duration(seconds: 3)}) async {
+  Future<http.Response> _post(String path, {dynamic body, Duration timeout = const Duration(seconds: 5)}) async {
     final candidates = [_workingBaseUrl, ...candidateBaseUrls].whereType<String>().toSet().toList();
     Exception? lastException;
 
@@ -163,7 +169,7 @@ class ApiService {
     final response = await _post(
       '/rider/login',
       body: {'email': email, 'password': password},
-      timeout: const Duration(seconds: 3),
+      timeout: const Duration(seconds: 6),
     );
 
     final data = jsonDecode(response.body);
@@ -185,6 +191,46 @@ class ApiService {
     }
   }
 
+  /// Request a 6-digit OTP sent to the rider's email
+  Future<Map<String, dynamic>> sendOtp(String email, {String? name}) async {
+    final response = await _post(
+      '/rider/send-otp',
+      body: {
+        'email': email.trim(),
+        'name': ?name?.trim(),
+      },
+      timeout: const Duration(seconds: 15),
+    );
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return data;
+    } else {
+      final msg = data['message'] ?? 'Failed to send OTP (${response.statusCode})';
+      throw Exception(msg);
+    }
+  }
+
+  /// Verify 6-digit email OTP
+  Future<bool> verifyOtp(String email, String otp) async {
+    final response = await _post(
+      '/rider/verify-otp',
+      body: {
+        'email': email.trim(),
+        'otp': otp.trim(),
+      },
+      timeout: const Duration(seconds: 10),
+    );
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return data['verified'] == true;
+    } else {
+      final msg = data['message'] ?? 'OTP verification failed (${response.statusCode})';
+      throw Exception(msg);
+    }
+  }
+
   /// Register a new rider account
   Future<Map<String, dynamic>> register({
     required String name,
@@ -195,6 +241,8 @@ class ApiService {
     String? licenseNumber,
     String? licensePhoto,
     String? orCrPhoto,
+    String? otp,
+    int? hubId,
   }) async {
     final response = await _post(
       '/rider/register',
@@ -207,6 +255,8 @@ class ApiService {
         'license_number': ?licenseNumber,
         'license_photo': ?licensePhoto,
         'or_cr_photo': ?orCrPhoto,
+        'otp': ?otp,
+        if (hubId != null) 'hub_id': hubId,
       },
       timeout: const Duration(seconds: 15),
     );
@@ -219,6 +269,17 @@ class ApiService {
       final msg = data['message'] ?? 'Registration failed (${response.statusCode})';
       throw Exception(msg);
     }
+  }
+
+  /// Fetch active hubs for registration dropdown
+  Future<List<Map<String, dynamic>>> getHubs() async {
+    final response = await _get('/hubs', timeout: const Duration(seconds: 10));
+    final data = jsonDecode(response.body);
+    if (response.statusCode == 200) {
+      final list = data['hubs'] as List<dynamic>;
+      return list.map((h) => Map<String, dynamic>.from(h as Map)).toList();
+    }
+    throw Exception('Failed to load hubs');
   }
 
   /// Logout and revoke current token

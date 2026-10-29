@@ -75,11 +75,14 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      // Pump a few frames — hub fetch will fail/timeout in test env, that's OK
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.text('Submit registration'));
       await tester.tap(find.text('Submit registration'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       expect(submitted, isFalse);
       expect(find.text('Required'), findsWidgets);
       expect(tester.takeException(), isNull);

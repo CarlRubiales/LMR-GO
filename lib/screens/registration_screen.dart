@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../theme/app_colors.dart';
+import '../services/api_service.dart';
 import '../services/mock_backend.dart';
+import '../services/psgc_service.dart';
+import '../theme/app_colors.dart';
 import '../widgets/auth_layout.dart';
+import '../widgets/searchable_address_picker.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({
@@ -39,16 +43,152 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   bool isSubmitting = false;
   String? registrationError;
 
+  // Hubs
+  static const List<Map<String, dynamic>> _fallbackHubs = [
+    {'id': 1, 'name': 'Sta Cruz Hub', 'branch': 'Santa Cruz', 'city': 'Santa Cruz'},
+    {'id': 2, 'name': 'Pila Hub', 'branch': 'Pila', 'city': 'Pila'},
+    {'id': 3, 'name': 'Main Hub', 'branch': 'Main', 'city': 'Main'},
+  ];
+  List<Map<String, dynamic>> _hubs = List.from(_fallbackHubs);
+  int? _selectedHubId;
+  bool _hubsLoading = false;
+
   String vehicle = 'Motorcycle';
   String sex = 'Select sex';
-  String province = 'Metro Manila';
-  String municipality = 'San Juan';
-  String barangay = 'Addition Hills';
+
+  // Address PSGC locations & state
+  List<PsgcLocation> _provinces = [];
+  List<PsgcLocation> _cities = [];
+  List<PsgcLocation> _barangays = [];
+
+  PsgcLocation? _selectedProvince;
+  PsgcLocation? _selectedCity;
+  PsgcLocation? _selectedBarangay;
+
+  bool _loadingProvinces = false;
+  bool _loadingCities = false;
+  bool _loadingBarangays = false;
+
+  String? _provinceError;
+  String? _cityError;
+  String? _barangayError;
 
   String? licensePhotoBase64;
   String? licensePhotoName;
   String? orCrPhotoBase64;
   String? orCrPhotoName;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchHubs();
+    _loadProvinces();
+  }
+
+  Future<void> _loadProvinces() async {
+    setState(() {
+      _loadingProvinces = true;
+      _provinceError = null;
+    });
+    try {
+      final list = await PsgcService.instance.getProvinces();
+      if (mounted) {
+        setState(() {
+          _provinces = list;
+          _loadingProvinces = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _provinceError = 'Could not load provinces. Tap to retry.';
+          _loadingProvinces = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _onProvinceSelected(PsgcLocation province) async {
+    if (_selectedProvince == province) return;
+    setState(() {
+      _selectedProvince = province;
+      _selectedCity = null;
+      _selectedBarangay = null;
+      _cities = [];
+      _barangays = [];
+      _cityError = null;
+      _barangayError = null;
+      _loadingCities = true;
+      if (registrationError != null) registrationError = null;
+    });
+
+    try {
+      final list = await PsgcService.instance.getCitiesMunicipalities(province);
+      if (mounted) {
+        setState(() {
+          _cities = list;
+          _loadingCities = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _cityError = e.toString().replaceFirst('Exception: ', '');
+          _loadingCities = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _onCitySelected(PsgcLocation city) async {
+    if (_selectedCity == city) return;
+    setState(() {
+      _selectedCity = city;
+      _selectedBarangay = null;
+      _barangays = [];
+      _barangayError = null;
+      _loadingBarangays = true;
+      if (registrationError != null) registrationError = null;
+    });
+
+    try {
+      final list = await PsgcService.instance.getBarangays(city);
+      if (mounted) {
+        setState(() {
+          _barangays = list;
+          _loadingBarangays = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _barangayError = e.toString().replaceFirst('Exception: ', '');
+          _loadingBarangays = false;
+        });
+      }
+    }
+  }
+
+  void _onBarangaySelected(PsgcLocation brgy) {
+    setState(() {
+      _selectedBarangay = brgy;
+      if (registrationError != null) registrationError = null;
+    });
+  }
+
+  Future<void> _fetchHubs() async {
+    try {
+      final hubs = await ApiService.instance.getHubs()
+          .timeout(const Duration(seconds: 8));
+      if (hubs.isNotEmpty && mounted) {
+        setState(() {
+          _hubs = hubs;
+        });
+      }
+    } catch (_) {
+      // Retains _fallbackHubs so all hubs are always available
+    }
+  }
 
   @override
   void dispose() {
@@ -302,6 +442,342 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     );
   }
 
+  Future<void> _promptOtpAndRegister(
+    BuildContext context,
+    String fullName,
+    String email,
+  ) async {
+    final otpController = TextEditingController();
+    bool isVerifying = false;
+    bool isResending = false;
+    String? otpError;
+    int cooldown = 60;
+    Timer? timer;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (bottomSheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            timer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+              if (cooldown > 0) {
+                setModalState(() => cooldown--);
+              } else {
+                t.cancel();
+              }
+            });
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(bottomSheetContext).viewInsets.bottom,
+              ),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: AppColors.cream,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 30),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Handle bar
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.line,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Header icon and title
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppColors.blush1,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.mark_email_read_outlined,
+                            color: AppColors.orange,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Verify Your Gmail',
+                                style: GoogleFonts.inter(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.plum,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Enter the 6-digit OTP code',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  color: AppColors.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: AppColors.muted),
+                          onPressed: () => Navigator.of(bottomSheetContext).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+
+                    // Explanatory banner
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.blush1,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.inputBorder),
+                      ),
+                      child: RichText(
+                        text: TextSpan(
+                          style: GoogleFonts.inter(
+                            fontSize: 12.5,
+                            color: AppColors.plum,
+                            height: 1.4,
+                          ),
+                          children: [
+                            const TextSpan(text: 'We sent a 6-digit code to '),
+                            TextSpan(
+                              text: email,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const TextSpan(text: '. Please check your inbox or spam folder.'),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // OTP input field
+                    TextField(
+                      controller: otpController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      textAlign: TextAlign.center,
+                      autofocus: true,
+                      style: GoogleFonts.sourceCodePro(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 10,
+                        color: AppColors.plum,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: '------',
+                        hintStyle: GoogleFonts.sourceCodePro(
+                          fontSize: 28,
+                          letterSpacing: 10,
+                          color: AppColors.muted,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.inputBorder, width: 1.5),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: AppColors.orange, width: 2),
+                        ),
+                      ),
+                    ),
+
+                    if (otpError != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        otpError!,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          color: AppColors.errorBoxText,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 16),
+
+                    // Verify and Submit button
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: isVerifying
+                            ? null
+                            : () async {
+                                final code = otpController.text.trim();
+                                if (code.length < 6) {
+                                  setModalState(() {
+                                    otpError = 'Please enter the complete 6-digit code';
+                                  });
+                                  return;
+                                }
+
+                                setModalState(() {
+                                  isVerifying = true;
+                                  otpError = null;
+                                });
+
+                                try {
+                                  // Verify OTP with Laravel backend
+                                  await ApiService.instance.verifyOtp(email, code);
+
+                                  // Submit full registration
+                                  await MockBackend().submitRegistration({
+                                    'name': fullName,
+                                    'fullName': fullName,
+                                    'email': email,
+                                    'phone': phoneController.text.trim(),
+                                    'password': passwordController.text.trim(),
+                                    'province': _selectedProvince?.name ?? '',
+                                    'municipality': _selectedCity?.name ?? '',
+                                    'barangay': _selectedBarangay?.name ?? '',
+                                    'street': streetController.text.trim(),
+                                    'vehicle': vehicle,
+                                    'license_number': plateController.text.trim(),
+                                    'license_photo': licensePhotoBase64 ?? '',
+                                    'or_cr_photo': orCrPhotoBase64 ?? '',
+                                    'otp': code,
+                                    if (_selectedHubId != null) 'hub_id': _selectedHubId,
+                                  });
+
+                                  timer?.cancel();
+                                  if (context.mounted) {
+                                    Navigator.of(bottomSheetContext).pop();
+                                  }
+
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Email verified & application submitted! Awaiting hub approval. You will receive an email once approved.',
+                                        ),
+                                        backgroundColor: AppColors.plum,
+                                        duration: Duration(seconds: 5),
+                                      ),
+                                    );
+                                    widget.onSubmitted();
+                                  }
+                                } catch (e) {
+                                  setModalState(() {
+                                    isVerifying = false;
+                                    otpError = e.toString().replaceFirst('Exception: ', '');
+                                  });
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.plum,
+                          foregroundColor: AppColors.cream,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          elevation: 0,
+                          textStyle: GoogleFonts.inter(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        child: isVerifying
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.cream,
+                                ),
+                              )
+                            : const Text('Verify & Submit Registration'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Resend button
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Didn't receive the code? ",
+                          style: GoogleFonts.inter(
+                            color: AppColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: cooldown > 0 || isResending
+                              ? null
+                              : () async {
+                                  setModalState(() {
+                                    isResending = true;
+                                    otpError = null;
+                                  });
+                                  try {
+                                    await ApiService.instance.sendOtp(
+                                      email,
+                                      name: fullName,
+                                    );
+                                    setModalState(() {
+                                      isResending = false;
+                                      cooldown = 60;
+                                    });
+                                  } catch (e) {
+                                    setModalState(() {
+                                      isResending = false;
+                                      otpError = e.toString().replaceFirst('Exception: ', '');
+                                    });
+                                  }
+                                },
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            cooldown > 0 ? 'Resend in ${cooldown}s' : 'Resend Code',
+                            style: GoogleFonts.inter(
+                              color: cooldown > 0 ? AppColors.muted : AppColors.orange,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    timer?.cancel();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AuthLayout(
@@ -491,24 +967,44 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               ),
             ),
             const SizedBox(height: 14),
-            select('Province *', province, [
-              'Metro Manila',
-              'Cavite',
-              'Laguna',
-              'Rizal',
-            ], (value) => setState(() => province = value!)),
-            select('Municipality *', municipality, [
-              'San Juan',
-              'Mandaluyong',
-              'Quezon City',
-              'Pasig',
-            ], (value) => setState(() => municipality = value!)),
-            select('Barangay *', barangay, [
-              'Addition Hills',
-              'Greenhills',
-              'Wack-Wack',
-              'Kapitolyo',
-            ], (value) => setState(() => barangay = value!)),
+            SearchableAddressPicker(
+              label: 'Province / Administrative Area *',
+              hint: 'Search & select province',
+              selectedLocation: _selectedProvince,
+              items: _provinces,
+              isLoading: _loadingProvinces,
+              errorMessage: _provinceError,
+              onRetry: _loadProvinces,
+              onSelected: _onProvinceSelected,
+            ),
+            SearchableAddressPicker(
+              label: 'Municipality / City *',
+              hint: _selectedProvince == null
+                  ? 'Select province first'
+                  : 'Search & select municipality or city',
+              selectedLocation: _selectedCity,
+              items: _cities,
+              isEnabled: _selectedProvince != null,
+              disabledReason: 'Please select a Province / Administrative Area first.',
+              isLoading: _loadingCities,
+              errorMessage: _cityError,
+              onRetry: () => _selectedProvince != null ? _onProvinceSelected(_selectedProvince!) : null,
+              onSelected: _onCitySelected,
+            ),
+            SearchableAddressPicker(
+              label: 'Barangay *',
+              hint: _selectedCity == null
+                  ? 'Select municipality / city first'
+                  : 'Search & select barangay',
+              selectedLocation: _selectedBarangay,
+              items: _barangays,
+              isEnabled: _selectedCity != null,
+              disabledReason: 'Please select a Municipality / City first.',
+              isLoading: _loadingBarangays,
+              errorMessage: _barangayError,
+              onRetry: () => _selectedCity != null ? _onCitySelected(_selectedCity!) : null,
+              onSelected: _onBarangaySelected,
+            ),
             field(
               'Street, house no., etc.',
               hint: 'Enter complete address',
@@ -525,6 +1021,47 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               ),
             ),
             const SizedBox(height: 12),
+            // Hub selection
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Assign to Hub *',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.plum,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  DropdownButtonFormField<int>(
+                    value: _selectedHubId,
+                    isExpanded: true,
+                    hint: Text(
+                      'Select hub',
+                      style: GoogleFonts.inter(fontSize: 14, color: AppColors.muted),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.inputBorder)),
+                    ),
+                    items: _hubs.map((hub) => DropdownMenuItem<int>(
+                      value: hub['id'] as int,
+                      child: Text(
+                        hub['name'] as String,
+                        style: GoogleFonts.inter(fontSize: 14, color: AppColors.plum),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    )).toList(),
+                    onChanged: (val) => setState(() => _selectedHubId = val),
+                    validator: (val) => val == null ? 'Please select a hub' : null,
+                  ),
+                ],
+              ),
+            ),
             select('Choose vehicle *', vehicle, [
               'Motorcycle',
               'Tricycle',
@@ -580,44 +1117,51 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                     ? null
                     : () async {
                         if (key.currentState?.validate() ?? false) {
+                          if (_selectedProvince == null) {
+                            setState(() {
+                              registrationError = 'Please search and select your Province / Administrative Area.';
+                            });
+                            return;
+                          }
+                          if (_selectedCity == null) {
+                            setState(() {
+                              registrationError = 'Please search and select your Municipality / City.';
+                            });
+                            return;
+                          }
+                          if (_selectedBarangay == null) {
+                            setState(() {
+                              registrationError = 'Please search and select your Barangay.';
+                            });
+                            return;
+                          }
+
                           setState(() {
                             isSubmitting = true;
                             registrationError = null;
                           });
 
                           final fullName = '${firstNameController.text.trim()} ${lastNameController.text.trim()}'.trim();
-
-                          final messenger = ScaffoldMessenger.of(context);
+                          final email = emailController.text.trim();
 
                           try {
-                            await MockBackend().submitRegistration({
-                              'name': fullName,
-                              'fullName': fullName,
-                              'email': emailController.text.trim(),
-                              'phone': phoneController.text.trim(),
-                              'password': passwordController.text.trim(),
-                              'province': province,
-                              'municipality': municipality,
-                              'barangay': barangay,
-                              'vehicle': vehicle,
-                              'license_number': plateController.text.trim(),
-                              'license_photo': ?licensePhotoBase64,
-                              'or_cr_photo': ?orCrPhotoBase64,
-                            });
-
-                            if (!mounted) return;
-
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Registration submitted! Awaiting administrator approval.',
-                                ),
-                                backgroundColor: AppColors.plum,
-                                duration: Duration(seconds: 4),
-                              ),
+                            // 1. Request 6-digit OTP code sent to Gmail
+                            await ApiService.instance.sendOtp(
+                              email,
+                              name: fullName,
                             );
 
-                            widget.onSubmitted();
+                            if (!mounted) return;
+                            setState(() {
+                              isSubmitting = false;
+                            });
+
+                            // 2. Open OTP verification sheet to enter code
+                            await _promptOtpAndRegister(
+                              context,
+                              fullName,
+                              email,
+                            );
                           } catch (e) {
                             if (mounted) {
                               setState(() {
@@ -657,7 +1201,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'After submitting, please wait for administrative approval. The result will be sent to your email.',
+              'After submitting, please wait for hub approval. The result will be sent to your Gmail.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 color: AppColors.muted,

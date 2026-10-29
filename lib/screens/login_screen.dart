@@ -27,6 +27,10 @@ class _LoginScreenState extends State<LoginScreen> {
   bool isLoading = false;
   String? errorMessage;
 
+  // Secret dev tap counter — tap logo 7 times to open server dialog
+  int _devTapCount = 0;
+  DateTime? _devTapLastTime;
+
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final emailFocus = FocusNode();
@@ -70,11 +74,37 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        final isTimeout = msg.toLowerCase().contains('timeout') ||
+            msg.toLowerCase().contains('future not completed');
+        final isConnectionError = isTimeout ||
+            msg.toLowerCase().contains('socket') ||
+            msg.toLowerCase().contains('cannot connect') ||
+            msg.toLowerCase().contains('connection');
+
         setState(() {
-          errorMessage = e.toString().replaceFirst('Exception: ', '');
+          if (isConnectionError) {
+            errorMessage =
+                'Connection timed out. Ensure your phone and laptop are on the same Wi-Fi network.';
+          } else {
+            errorMessage = msg;
+          }
           isLoading = false;
         });
       }
+    }
+  }
+
+  void _onLogoSecretTap() {
+    final now = DateTime.now();
+    if (_devTapLastTime == null || now.difference(_devTapLastTime!) > const Duration(seconds: 3)) {
+      _devTapCount = 0;
+    }
+    _devTapLastTime = now;
+    _devTapCount++;
+    if (_devTapCount >= 7) {
+      _devTapCount = 0;
+      _showServerDialog();
     }
   }
 
@@ -119,15 +149,21 @@ class _LoginScreenState extends State<LoginScreen> {
                 runSpacing: 6,
                 children: [
                   ActionChip(
-                    label: const Text('Wi-Fi / 192.168.86.23', style: TextStyle(fontSize: 11)),
+                    label: const Text('Laptop Hotspot / 192.168.137.1', style: TextStyle(fontSize: 11)),
                     onPressed: () {
-                      serverController.text = 'http://192.168.86.23/api/v1';
+                      serverController.text = 'http://192.168.137.1/api/v1';
                     },
                   ),
                   ActionChip(
-                    label: const Text('Wi-Fi :8000', style: TextStyle(fontSize: 11)),
+                    label: const Text('Wi-Fi / 172.20.10.4', style: TextStyle(fontSize: 11)),
                     onPressed: () {
-                      serverController.text = 'http://192.168.86.23:8000/api/v1';
+                      serverController.text = 'http://172.20.10.4/api/v1';
+                    },
+                  ),
+                  ActionChip(
+                    label: const Text('Home / 192.168.86.42', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      serverController.text = 'http://192.168.86.42:8000/api/v1';
                     },
                   ),
                   ActionChip(
@@ -240,29 +276,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   )
                 else
                   const SizedBox.shrink(),
-                IconButton(
-                  tooltip: 'Server Settings',
-                  padding: const EdgeInsets.only(bottom: 12),
-                  constraints: const BoxConstraints(),
-                  icon: const Icon(
-                    Icons.dns_outlined,
-                    size: 18,
-                    color: AppColors.inputIcon,
-                  ),
-                  onPressed: _showServerDialog,
-                ),
               ],
             ),
 
-            // Heading: Centered "Welcome back" in Playfair Display (32-36 px, weight 600, plum)
-            Text(
-              'Welcome back',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.playfairDisplay(
-                fontSize: 32,
-                fontWeight: FontWeight.w600,
-                color: AppColors.plum,
-                letterSpacing: -0.5,
+            // Heading: tap 7× quickly (dev secret) to open server settings
+            GestureDetector(
+              onTap: _onLogoSecretTap,
+              child: Text(
+                'Welcome back',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.plum,
+                  letterSpacing: -0.5,
+                ),
               ),
             ),
             const SizedBox(height: 8),

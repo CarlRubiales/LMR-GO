@@ -307,17 +307,19 @@ class MockBackend {
     return _defaultHistory;
   }
 
-  Future<void> submitRegistration(Map<String, String> payload) async {
+  Future<void> submitRegistration(Map<String, dynamic> payload) async {
     if (payload.containsKey('email') && payload.containsKey('password')) {
       await ApiService.instance.register(
         name: payload['fullName'] ?? payload['name'] ?? 'Rider',
-        email: payload['email']!,
-        password: payload['password']!,
-        phone: payload['phone'],
-        vehicleType: payload['vehicle'],
-        licenseNumber: payload['license_number'],
-        licensePhoto: payload['license_photo'],
-        orCrPhoto: payload['or_cr_photo'],
+        email: payload['email'] as String,
+        password: payload['password'] as String,
+        phone: payload['phone'] as String?,
+        vehicleType: payload['vehicle'] as String?,
+        licenseNumber: payload['license_number'] as String?,
+        licensePhoto: payload['license_photo'] as String?,
+        orCrPhoto: payload['or_cr_photo'] as String?,
+        otp: payload['otp'] as String?,
+        hubId: payload['hub_id'] as int?,
       );
     }
   }
