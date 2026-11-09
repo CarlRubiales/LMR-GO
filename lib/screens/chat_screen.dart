@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_colors.dart';
 import '../models/chat_preview.dart';
+import '../services/api_service.dart';
 import '../widgets/app_page.dart';
 import 'conversation_screen.dart';
 
@@ -30,6 +31,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    if (ApiService.instance.isAuthenticated) {
+      _loadLiveHubPreview();
+    }
     if (widget.initialParcelId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -40,6 +44,33 @@ class _ChatScreenState extends State<ChatScreen> {
         open(hub, attachedParcelId: widget.initialParcelId);
       });
     }
+  }
+
+  Future<void> _loadLiveHubPreview() async {
+    try {
+      final list = await ApiService.instance.fetchMessages();
+      if (!mounted || list.isEmpty) return;
+      final hubConv = conversations.firstWhere((c) => c.isHubStaff, orElse: () => conversations.first);
+      final last = list.last;
+      final text = (last['message'] ?? last['text'] ?? '').toString();
+      final isMine = last['is_mine'] == true;
+      final timeStr = last['created_at']?.toString();
+      final time = timeStr != null ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now()) : DateTime.now();
+
+      setState(() {
+        if (hubConv.messages.isNotEmpty && hubConv.messages.last.text == text) return;
+        hubConv.messages.add(
+          PreviewMessage(
+            id: last['id'] as int? ?? 0,
+            text: text,
+            isMine: isMine,
+            time: time,
+            parcelId: last['parcel_id']?.toString() ?? last['parcel_number']?.toString(),
+            senderName: (last['sender_name'] ?? '').toString(),
+          ),
+        );
+      });
+    } catch (_) {}
   }
 
   @override

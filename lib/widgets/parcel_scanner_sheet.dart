@@ -43,9 +43,24 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
   void initState() {
     super.initState();
     _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.normal,
+      detectionSpeed: DetectionSpeed.unrestricted,
+      detectionTimeoutMs: 200,
       facing: CameraFacing.back,
       torchEnabled: false,
+      formats: const [
+        BarcodeFormat.code128,
+        BarcodeFormat.code39,
+        BarcodeFormat.code93,
+        BarcodeFormat.ean13,
+        BarcodeFormat.ean8,
+        BarcodeFormat.upcA,
+        BarcodeFormat.upcE,
+        BarcodeFormat.qrCode,
+        BarcodeFormat.dataMatrix,
+        BarcodeFormat.pdf417,
+        BarcodeFormat.codabar,
+        BarcodeFormat.itf,
+      ],
     );
 
     _animController = AnimationController(
@@ -205,13 +220,34 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
           ],
         ),
         actions: [
+          if (widget.targetParcel != null || _manifest.isNotEmpty)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  final target = widget.targetParcel ?? _manifest.first;
+                  _handleBarcodeScanned(target.barcode ?? target.id);
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.plum,
+                  foregroundColor: AppColors.cream,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: Text(
+                  'Accept for ${(widget.targetParcel ?? _manifest.first).id}',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          const SizedBox(height: 6),
           SizedBox(
             width: double.infinity,
-            child: FilledButton(
+            child: OutlinedButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.plum,
-                foregroundColor: AppColors.cream,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.muted,
+                side: const BorderSide(color: AppColors.line),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               child: Text('Dismiss', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
@@ -270,7 +306,6 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
 
   @override
   Widget build(BuildContext context) {
-    final assignedParcels = _manifest.where((p) => p.stage == DeliveryStage.accepted).toList();
     final pickedUpParcels = _manifest.where((p) => p.stage == DeliveryStage.pickedUp).toList();
 
     return Container(

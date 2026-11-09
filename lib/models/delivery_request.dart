@@ -16,10 +16,12 @@ class DeliveryRequest {
     this.landmark,
     this.codAmount = 0.0,
     this.isCod = false,
+    this.isCodRemitted = false,
     this.stopOrder = 1,
     this.failureReason,
     this.failureNotes,
     this.podPhotoPath,
+    this.podVideoPath,
     this.podSignature,
     this.podOtp,
     this.assignedAt,
@@ -43,10 +45,12 @@ class DeliveryRequest {
   final String? landmark;
   final double codAmount;
   final bool isCod;
+  final bool isCodRemitted;
   final int stopOrder;
   final String? failureReason;
   final String? failureNotes;
   final String? podPhotoPath;
+  final String? podVideoPath;
   final String? podSignature;
   final String? podOtp;
   final DateTime? assignedAt;
@@ -89,10 +93,12 @@ class DeliveryRequest {
     String? landmark,
     double? codAmount,
     bool? isCod,
+    bool? isCodRemitted,
     int? stopOrder,
     String? failureReason,
     String? failureNotes,
     String? podPhotoPath,
+    String? podVideoPath,
     String? podSignature,
     String? podOtp,
     DateTime? assignedAt,
@@ -116,10 +122,12 @@ class DeliveryRequest {
       landmark: landmark ?? this.landmark,
       codAmount: codAmount ?? this.codAmount,
       isCod: isCod ?? this.isCod,
+      isCodRemitted: isCodRemitted ?? this.isCodRemitted,
       stopOrder: stopOrder ?? this.stopOrder,
       failureReason: failureReason ?? this.failureReason,
       failureNotes: failureNotes ?? this.failureNotes,
       podPhotoPath: podPhotoPath ?? this.podPhotoPath,
+      podVideoPath: podVideoPath ?? this.podVideoPath,
       podSignature: podSignature ?? this.podSignature,
       podOtp: podOtp ?? this.podOtp,
       assignedAt: assignedAt ?? this.assignedAt,
@@ -142,7 +150,7 @@ class DeliveryRequest {
       stage = DeliveryStage.delivered;
     } else if (stageStr == 'completed') {
       stage = DeliveryStage.completed;
-    } else if (stageStr == 'failed' || stageStr == 'delivery_failed' || stageStr == 'exception') {
+    } else if (stageStr == 'failed' || stageStr == 'delivery_failed' || stageStr == 'exception' || stageStr == 'return_refund' || stageStr == 'return/refund') {
       stage = DeliveryStage.failed;
     } else if (stageStr == 'rescheduled') {
       stage = DeliveryStage.rescheduled;
@@ -179,10 +187,15 @@ class DeliveryRequest {
       landmark: json['landmark']?.toString() ?? json['notes']?.toString(),
       codAmount: codVal,
       isCod: isCodVal,
+      isCodRemitted: json['is_cod_remitted'] == true ||
+          json['cod_remitted'] == true ||
+          json['cod_remit_status'] == 'awaiting_cashier' ||
+          json['cod_remit_status'] == 'remitted',
       stopOrder: int.tryParse(json['stop_order']?.toString() ?? '1') ?? 1,
-      failureReason: json['failure_reason']?.toString(),
-      failureNotes: json['failure_notes']?.toString(),
-      podPhotoPath: json['pod_photo_path']?.toString(),
+      failureReason: json['failure_reason']?.toString() ?? json['return_reason']?.toString(),
+      failureNotes: json['failure_notes']?.toString() ?? json['return_notes']?.toString(),
+      podPhotoPath: json['pod_photo_path']?.toString() ?? json['return_photo_url']?.toString(),
+      podVideoPath: json['pod_video_path']?.toString() ?? json['return_video_url']?.toString(),
       podSignature: json['pod_signature']?.toString(),
       podOtp: json['pod_otp']?.toString(),
     );
@@ -205,10 +218,12 @@ class DeliveryRequest {
         'landmark': landmark,
         'cod_amount': codAmount,
         'is_cod': isCod,
+        'is_cod_remitted': isCodRemitted,
         'stop_order': stopOrder,
         'failure_reason': failureReason,
         'failure_notes': failureNotes,
         'pod_photo_path': podPhotoPath,
+        'pod_video_path': podVideoPath,
         'pod_signature': podSignature,
         'pod_otp': podOtp,
       };

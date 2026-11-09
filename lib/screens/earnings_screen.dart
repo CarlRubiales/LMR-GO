@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
 import '../services/mock_backend.dart';
 import '../widgets/app_page.dart';
+import '../widgets/rider_date_selector.dart';
 
 class EarningsScreen extends StatelessWidget {
   const EarningsScreen({super.key});
@@ -12,13 +13,16 @@ class EarningsScreen extends StatelessWidget {
   Widget build(BuildContext context) => AppPage(
     title: 'Earnings',
     subtitle: 'A clear view of your financial growth',
-    child: FutureBuilder<Map<String, String>>(
-      future: MockBackend().getEarnings(),
-      builder: (_, snap) {
-        final data = snap.data ?? const {};
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    child: ValueListenableBuilder<DateTime>(
+      valueListenable: MockBackend().selectedDateNotifier,
+      builder: (_, selectedDate, child) => FutureBuilder<Map<String, String>>(
+        future: MockBackend().getEarnings(date: selectedDate),
+        builder: (_, snap) {
+          final data = snap.data ?? const {};
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const RiderDateSelector(),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
@@ -144,7 +148,8 @@ class EarningsScreen extends StatelessWidget {
         );
       },
     ),
-  );
+  ),
+);
 }
 
 class _Metric extends StatelessWidget {

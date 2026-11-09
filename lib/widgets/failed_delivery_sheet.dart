@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,10 +14,12 @@ class FailedDeliverySheet extends StatefulWidget {
     super.key,
     required this.parcel,
     required this.onFailedRecorded,
+    this.isPostDelivery = false,
   });
 
   final DeliveryRequest parcel;
   final VoidCallback onFailedRecorded;
+  final bool isPostDelivery;
 
   @override
   State<FailedDeliverySheet> createState() => _FailedDeliverySheetState();
@@ -22,22 +27,30 @@ class FailedDeliverySheet extends StatefulWidget {
 
 class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
   static const List<String> _reasons = [
-    'Customer Not Home',
-    'Wrong Address / Unlocatable',
-    'Customer Refused Parcel',
-    'Unreachable / Phone Off',
-    'Requested Reschedule',
-    'Other Issue',
+    'Damaged / Defective Item',
+    'Wrong Item / Incomplete Order',
+    'Customer Refused / Cancelled Order',
+    'Item Does Not Match Description',
+    'Customer Unreachable / Not Home',
+    'Wrong / Incomplete Delivery Address',
+    'Other Return / Refund Reason',
   ];
 
-  String _selectedReason = _reasons.first;
+  String? _selectedReason;
   final TextEditingController _notesController = TextEditingController();
-  String? _photoPath;
-  bool _isSubmitting = false;
+  final ImagePicker _picker = ImagePicker();
 
-  // Reschedule options
-  String _rescheduleDay = 'Tomorrow';
-  String _rescheduleWindow = 'Morning (9 AM - 12 PM)';
+  String? _photoPath;
+  String? _videoPath;
+  bool _isReschedule = false;
+  String _selectedWindow = 'Tomorrow · Morning (9AM - 12PM)';
+  bool _submitting = false;
+
+  static const List<String> _rescheduleWindows = [
+    'Tomorrow · Morning (9AM - 12PM)',
+    'Tomorrow · Afternoon (1PM - 5PM)',
+    'Next Business Day · Standard Window',
+  ];
 
   @override
   void dispose() {
@@ -45,31 +58,72 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
     super.dispose();
   }
 
-  Future<void> _takePhoto() async {
+  Future<void> _pickPhoto(ImageSource source) async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.camera,
-        maxWidth: 1000,
-        maxHeight: 1000,
-        imageQuality: 80,
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 78,
       );
-      if (picked != null) {
-        setState(() => _photoPath = picked.path);
+      if (image != null && mounted) {
+        setState(() {
+          _photoPath = image.path;
+        });
       }
     } catch (_) {
-      setState(() => _photoPath = 'simulated_failed_${widget.parcel.id}.jpg');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to access camera/gallery for photo.'),
+            backgroundColor: AppColors.failed,
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _submitAction({required bool isReschedule}) async {
-    if (_isSubmitting) return;
-    setState(() => _isSubmitting = true);
+  Future<void> _pickVideo(ImageSource source) async {
+    try {
+      final XFile? video = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(seconds: 30),
+      );
+      if (video != null && mounted) {
+        setState(() {
+          _videoPath = video.path;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to access camera/gallery for video.'),
+            backgroundColor: AppColors.failed,
+          ),
+        );
+      }
+    }
+  }
 
-    final stage = isReschedule ? DeliveryStage.rescheduled : DeliveryStage.returningToHub;
-    final fullNotes = isReschedule
-        ? 'Rescheduled for $_rescheduleDay ($_rescheduleWindow). Notes: ${_notesController.text.trim()}'
-        : 'Returning to hub sorting bin. Notes: ${_notesController.text.trim()}';
+  Future<void> _submitAction() async {
+    if (_selectedReason == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a reason for Return / Refund.'),
+          backgroundColor: AppColors.failed,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+
+    final stage = _isReschedule ? DeliveryStage.rescheduled : DeliveryStage.failed;
+    final notesText = _notesController.text.trim();
+    final fullNotes = _isReschedule
+        ? 'Rescheduled for $_selectedWindow. $notesText'.trim()
+        : notesText;
 
     await MockBackend().updateParcelStatus(
       widget.parcel.id,
@@ -77,6 +131,7 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
       failureReason: _selectedReason,
       failureNotes: fullNotes,
       podPhotoPath: _photoPath,
+      podVideoPath: _videoPath,
     );
 
     if (mounted) {
@@ -85,15 +140,20 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            isReschedule
-                ? 'Parcel ${widget.parcel.id} rescheduled for $_rescheduleDay'
-                : 'Parcel ${widget.parcel.id} marked Returning to Hub',
+            _isReschedule
+                ? 'Parcel ${widget.parcel.id} rescheduled for $_selectedWindow'
+                : 'Parcel ${widget.parcel.id} submitted for Return/Refund ($_selectedReason)',
           ),
-          backgroundColor: AppColors.failed,
-          duration: const Duration(seconds: 2),
+          backgroundColor: _isReschedule ? AppColors.orange : AppColors.failed,
         ),
       );
     }
+  }
+
+  String _fileBasename(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    return parts.isNotEmpty ? parts.last : path;
   }
 
   @override
@@ -106,7 +166,7 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
       ),
       child: Column(
         children: [
-          // Drag Handle
+          // Drag handle
           const SizedBox(height: 12),
           Container(
             width: 44,
@@ -123,25 +183,43 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Report Delivery Issue',
-                      style: GoogleFonts.playfairDisplay(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.failed,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${widget.parcel.id} · ${widget.parcel.receiverName}',
-                      style: GoogleFonts.inter(fontSize: 12, color: AppColors.muted),
-                    ),
-                  ],
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.failedSoft,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.assignment_return_outlined,
+                    color: AppColors.failed,
+                    size: 20,
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (widget.isPostDelivery || widget.parcel.isDelivered)
+                            ? 'Return / Refund Request'
+                            : 'Report Failed Delivery',
+                        style: GoogleFonts.playfairDisplay(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.plum,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${widget.parcel.id} · ${widget.parcel.receiverName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(fontSize: 12, color: AppColors.muted),
+                      ),
+                    ],
+                  ),
+                ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(Icons.close, color: AppColors.muted),
@@ -149,14 +227,98 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
               ],
             ),
           ),
-          const Divider(height: 20, color: AppColors.line),
+          const Divider(height: 18, color: AppColors.line),
 
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               children: [
+                if (widget.isPostDelivery || widget.parcel.isDelivered)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.failedSoft,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.assignment_return_outlined, size: 18, color: AppColors.failed),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Post-Delivery Return / Refund Request',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.failed,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  // Action Toggle: Return/Refund vs Reschedule
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.blush1,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    padding: const EdgeInsets.all(4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _isReschedule = false),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(
+                                color: !_isReschedule ? AppColors.failed : Colors.transparent,
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: Text(
+                                'Return / Refund',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: !_isReschedule ? Colors.white : AppColors.plum,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _isReschedule = true),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              decoration: BoxDecoration(
+                                color: _isReschedule ? AppColors.orange : Colors.transparent,
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: Text(
+                                'Reschedule Delivery',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: _isReschedule ? Colors.white : AppColors.plum,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 16),
+
+                // 1. Reason Selection
                 Text(
-                  'SELECT REASON FOR FAILED DELIVERY',
+                  '1. SELECT RETURN / REFUND REASON *',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
@@ -164,99 +326,312 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                     letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
 
-                // Reasons Chips / Radios
-                for (final reason in _reasons)
-                  InkWell(
-                    onTap: () => setState(() => _selectedReason = reason),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: _selectedReason == reason ? AppColors.failedSoft : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _selectedReason == reason ? AppColors.failed : AppColors.line,
-                          width: _selectedReason == reason ? 1.5 : 1,
+                ..._reasons.map((reason) {
+                  final isSelected = _selectedReason == reason;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 7),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppColors.blush1 : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected ? AppColors.plum : AppColors.line,
+                        width: isSelected ? 1.5 : 1,
+                      ),
+                    ),
+                    child: RadioListTile<String>(
+                      value: reason,
+                      groupValue: _selectedReason,
+                      activeColor: AppColors.plum,
+                      dense: true,
+                      title: Text(
+                        reason,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                          color: AppColors.ink,
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _selectedReason == reason ? Icons.radio_button_checked : Icons.radio_button_off,
-                            color: _selectedReason == reason ? AppColors.failed : AppColors.muted,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              reason,
-                              style: GoogleFonts.inter(
-                                fontSize: 13,
-                                fontWeight: _selectedReason == reason ? FontWeight.w700 : FontWeight.w500,
-                                color: _selectedReason == reason ? AppColors.failed : AppColors.ink,
-                              ),
-                            ),
-                          ),
-                        ],
+                      onChanged: (val) => setState(() => _selectedReason = val),
+                    ),
+                  );
+                }),
+
+                // Reschedule Time Window Selection (if Reschedule tab selected)
+                if (_isReschedule) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'SELECT NEW DELIVERY WINDOW',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedWindow,
+                        isExpanded: true,
+                        items: _rescheduleWindows.map((w) {
+                          return DropdownMenuItem<String>(
+                            value: w,
+                            child: Text(w, style: GoogleFonts.inter(fontSize: 13)),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setState(() => _selectedWindow = val);
+                        },
                       ),
                     ),
                   ),
+                ],
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
 
-                // Optional Photo of Gate/Doorstep
+                // 2. Picture (Photo) Evidence
+                Text(
+                  '2. ATTACH PICTURE (PHOTO EVIDENCE)',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.plum,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _photoPath != null ? AppColors.delivered : AppColors.line,
+                      width: _photoPath != null ? 1.5 : 1,
+                    ),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      CircleAvatar(
-                        radius: 18,
-                        backgroundColor: AppColors.blush1,
-                        child: const Icon(Icons.camera_alt_outlined, color: AppColors.plum, size: 18),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _photoPath != null ? 'Doorstep Proof Captured' : 'Attach Photo Proof (Optional)',
-                              style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                      if (_photoPath != null) ...[
+                        if (!kIsWeb && File(_photoPath!).existsSync())
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(
+                              File(_photoPath!),
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
                             ),
-                            Text(
-                              'Closed gate, house number, or notice',
-                              style: GoogleFonts.inter(fontSize: 10.5, color: AppColors.muted),
+                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.check_circle, color: AppColors.delivered, size: 18),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Picture attached: ${_fileBasename(_photoPath!)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.delivered,
+                                ),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => setState(() => _photoPath = null),
+                              icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.failed),
+                              label: Text(
+                                'Remove',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.failed,
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                      TextButton(
-                        onPressed: _takePhoto,
-                        child: Text(
-                          _photoPath != null ? 'Retake' : 'Capture',
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.plum,
-                          ),
+                      ] else ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _pickPhoto(ImageSource.camera),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.plum,
+                                  side: const BorderSide(color: AppColors.plum),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                                label: Text(
+                                  'Take Picture',
+                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _pickPhoto(ImageSource.gallery),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.plum,
+                                  side: const BorderSide(color: AppColors.line),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                icon: const Icon(Icons.photo_library_outlined, size: 18),
+                                label: Text(
+                                  'From Gallery',
+                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
 
-                // Rider Note field
+                const SizedBox(height: 14),
+
+                // 3. Video Evidence
                 Text(
-                  'ADDITIONAL NOTES / REMARKS',
+                  '3. ATTACH VIDEO (VIDEO EVIDENCE)',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.plum,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _videoPath != null ? AppColors.delivered : AppColors.line,
+                      width: _videoPath != null ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_videoPath != null) ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.deliveredSoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.videocam, color: AppColors.delivered, size: 22),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Video Clip Attached',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: AppColors.delivered,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _fileBasename(_videoPath!),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 11,
+                                        color: AppColors.ink,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Remove video',
+                                onPressed: () => setState(() => _videoPath = null),
+                                icon: const Icon(Icons.delete_outline, color: AppColors.failed, size: 20),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _pickVideo(ImageSource.camera),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.plum,
+                                  side: const BorderSide(color: AppColors.plum),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                icon: const Icon(Icons.videocam_outlined, size: 18),
+                                label: Text(
+                                  'Record Video',
+                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _pickVideo(ImageSource.gallery),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.plum,
+                                  side: const BorderSide(color: AppColors.line),
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                icon: const Icon(Icons.video_library_outlined, size: 18),
+                                label: Text(
+                                  'From Gallery',
+                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 14),
+
+                // 4. Additional Reason Details / Notes
+                Text(
+                  '4. ADDITIONAL REASON DETAILS / NOTES',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
@@ -267,138 +642,54 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: _notesController,
-                  maxLines: 2,
-                  style: GoogleFonts.inter(fontSize: 12.5),
+                  maxLines: 3,
                   decoration: InputDecoration(
-                    hintText: 'e.g. Called 3x, gate locked, neighbor said at work...',
-                    hintStyle: GoogleFonts.inter(fontSize: 11.5, color: AppColors.muted),
+                    hintText: 'Explain the return/refund reason or parcel condition...',
+                    hintStyle: GoogleFonts.inter(fontSize: 12, color: AppColors.muted),
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(color: AppColors.line),
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
-
-                // Reschedule Options Card
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.blush1,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.line),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.event_repeat, color: AppColors.plum, size: 18),
-                          const SizedBox(width: 8),
-                          Text(
-                            'RESCHEDULE PREFERENCES',
-                            style: GoogleFonts.inter(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.plum,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              initialValue: _rescheduleDay,
-                              decoration: InputDecoration(
-                                labelText: 'Day',
-                                labelStyle: GoogleFonts.inter(fontSize: 11),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                filled: true,
-                                fillColor: Colors.white,
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              items: ['Tomorrow', 'In 2 Days', 'Next Monday']
-                                  .map((d) => DropdownMenuItem(value: d, child: Text(d, style: GoogleFonts.inter(fontSize: 12))))
-                                  .toList(),
-                              onChanged: (v) => setState(() => _rescheduleDay = v ?? 'Tomorrow'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              initialValue: _rescheduleWindow,
-                              decoration: InputDecoration(
-                                labelText: 'Time Window',
-                                labelStyle: GoogleFonts.inter(fontSize: 11),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                filled: true,
-                                fillColor: Colors.white,
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                              ),
-                              items: ['Morning (9 AM - 12 PM)', 'Afternoon (1 PM - 5 PM)']
-                                  .map((w) => DropdownMenuItem(value: w, child: Text(w, style: GoogleFonts.inter(fontSize: 10))))
-                                  .toList(),
-                              onChanged: (v) => setState(() => _rescheduleWindow = v ?? 'Morning (9 AM - 12 PM)'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
 
-          // Two Action Buttons: Reschedule OR Return to Hub
+          // Submit Footer
           Container(
             padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
               color: AppColors.cream,
               border: Border(top: BorderSide(color: AppColors.line)),
             ),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton.icon(
-                    onPressed: !_isSubmitting ? () => _submitAction(isReschedule: true) : null,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.plum,
-                      foregroundColor: AppColors.cream,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    icon: const Icon(Icons.schedule_send, size: 18),
-                    label: Text(
-                      'Reschedule Delivery Run',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13.5),
-                    ),
-                  ),
+            child: SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: _submitting ? null : _submitAction,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _isReschedule ? AppColors.orange : AppColors.failed,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: OutlinedButton.icon(
-                    onPressed: !_isSubmitting ? () => _submitAction(isReschedule: false) : null,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.failed,
-                      side: const BorderSide(color: AppColors.failed),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    icon: const Icon(Icons.keyboard_return, size: 18),
-                    label: Text(
-                      'Return Parcel to Hub Sorting Center',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13),
-                    ),
-                  ),
+                icon: _submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : Icon(_isReschedule ? Icons.update : Icons.assignment_return_outlined),
+                label: Text(
+                  _submitting
+                      ? 'Submitting Return / Refund...'
+                      : (_isReschedule ? 'Confirm Reschedule' : 'Submit Return / Refund'),
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 15),
                 ),
-              ],
+              ),
             ),
           ),
         ],

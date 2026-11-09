@@ -3,12 +3,14 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/delivery_request.dart';
 import '../services/api_service.dart';
 import '../services/mock_backend.dart';
+import '../services/navigation_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_page.dart';
 import '../widgets/eod_return_sheet.dart';
 import '../widgets/hub_pickup_sheet.dart';
 import '../widgets/parcel_card.dart';
 import '../widgets/parcel_scanner_sheet.dart';
+import '../widgets/rider_date_selector.dart';
 import '../widgets/stop_details_sheet.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -52,7 +54,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
     _isLoading = false;
     MockBackend().parcelsNotifier.addListener(_onParcelsChanged);
+    MockBackend().selectedDateNotifier.addListener(_onDateChanged);
     MockBackend().startAutoSync();
+    _refreshParcels();
+  }
+
+  void _onDateChanged() {
+    if (!mounted) return;
     _refreshParcels();
   }
 
@@ -73,6 +81,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     MockBackend().parcelsNotifier.removeListener(_onParcelsChanged);
+    MockBackend().selectedDateNotifier.removeListener(_onDateChanged);
+    MockBackend().stopAutoSync();
     super.dispose();
   }
 
@@ -198,9 +208,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     };
 
     // Calculate total COD collected today to remit
-    final totalCodCollected = _parcels
-        .where((p) => p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed)
-        .fold(0.0, (sum, p) => sum + (p.isCod ? p.codAmount : 0.0));
+    final unremittedCodTotal = _parcels
+        .where((p) =>
+            (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) &&
+            p.isCod &&
+            !p.isCodRemitted)
+        .fold(0.0, (sum, p) => sum + p.codAmount);
+    final hasUnremittedCash = unremittedCodTotal > 0;
+    final remitStatus = hasUnremittedCash
+        ? 'not_remitted'
+        : MockBackend().getRemittanceStatus(MockBackend().selectedDate);
+    final isRemittedToday = !hasUnremittedCash &&
+        (MockBackend().isCodRemittedForDate(MockBackend().selectedDate) ||
+            remitStatus == 'remitted' ||
+            remitStatus == 'awaiting_cashier');
+    final totalCodCollected = unremittedCodTotal;
+    final remittedTodayAmount = MockBackend().getRemittedCodAmount(MockBackend().selectedDate);
+    final remitDifference = MockBackend().getRemittanceDifference(MockBackend().selectedDate);
 
     final nextStop = _nextStop;
 
@@ -229,13 +253,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ? (userRouteCode.toUpperCase().startsWith('ROUTE') ? userRouteCode : 'Route $userRouteCode')
         : (parcelAreas.isNotEmpty ? 'Route ${parcelAreas.first}' : 'Route Hub');
 
+    final isToday = MockBackend().isSelectedDateToday;
+    final selectedDate = MockBackend().selectedDate;
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    final dateTitle = isToday
+        ? "Today's Run"
+        : "Run — ${months[selectedDate.month - 1]} ${selectedDate.day}";
+    final dateSubtitle = isToday
+        ? 'Lumora Sorting Hub · Last-Mile Delivery Manifest'
+        : 'Archived Run Manifest · Historical Preserved Record';
+
     return AppPage(
-      title: "Today's Run",
-      subtitle: 'Lumora Sorting Hub · Last-Mile Delivery Manifest',
+      title: dateTitle,
+      subtitle: dateSubtitle,
       onRefresh: _refreshParcels,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const RiderDateSelector(),
           // 1. Online / Offline Status & Assigned Areas Top Card
           Container(
             decoration: BoxDecoration(
@@ -488,11 +526,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(width: 6),
               Expanded(
                 child: _CountCard(
-                  label: 'Failed',
+                  label: 'Return/Refund',
                   count: failedCount,
                   color: AppColors.failed,
                   bg: AppColors.failedSoft,
-                  icon: Icons.cancel_outlined,
+                  icon: Icons.assignment_return_outlined,
                   isSelected: _statusFilter == 5,
                   onTap: () => setState(() => _statusFilter = _statusFilter == 5 ? 0 : 5),
                 ),
@@ -517,9 +555,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.blush1,
+              color: remitStatus == 'awaiting_cashier'
+                  ? const Color(0xFFFFFBEB)
+                  : (remitStatus == 'short'
+                      ? const Color(0xFFFEF2F2)
+                      : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                          ? AppColors.deliveredSoft
+                          : AppColors.blush1),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.orange.withValues(alpha: 0.35)),
+              border: Border.all(
+                color: remitStatus == 'awaiting_cashier'
+                    ? const Color(0xFFFDE68A)
+                    : (remitStatus == 'short'
+                        ? const Color(0xFFFECACA)
+                        : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                            ? AppColors.delivered.withValues(alpha: 0.35)
+                            : AppColors.orange.withValues(alpha: 0.35)),
+              ),
             ),
             child: Row(
               children: [
@@ -529,7 +581,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.payments_outlined, color: AppColors.orange, size: 20),
+                  child: Icon(
+                    remitStatus == 'awaiting_cashier'
+                        ? Icons.hourglass_top_rounded
+                        : (remitStatus == 'short'
+                            ? Icons.warning_amber_rounded
+                            : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                ? Icons.check_circle_outline
+                                : Icons.payments_outlined),
+                    color: remitStatus == 'awaiting_cashier'
+                        ? const Color(0xFFB45309)
+                        : (remitStatus == 'short'
+                            ? AppColors.failed
+                            : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                ? AppColors.delivered
+                                : AppColors.orange),
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -537,44 +605,133 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'COD CASH TO REMIT TODAY',
+                        remitStatus == 'awaiting_cashier'
+                            ? 'AWAITING CASHIER'
+                            : (remitStatus == 'short'
+                                ? 'REMITTANCE SHORTAGE'
+                                : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                    ? 'COD REMITTED TODAY'
+                                    : 'COD CASH TO REMIT TODAY'),
                         style: GoogleFonts.inter(
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.orange,
+                          color: remitStatus == 'awaiting_cashier'
+                              ? const Color(0xFFB45309)
+                              : (remitStatus == 'short'
+                                  ? AppColors.failed
+                                  : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                      ? AppColors.delivered
+                                      : AppColors.orange),
                           letterSpacing: 0.6,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '₱${totalCodCollected.toStringAsFixed(2)}',
+                        remitStatus == 'short'
+                            ? '₱${remitDifference.abs().toStringAsFixed(2)} balance'
+                            : '₱${totalCodCollected.toStringAsFixed(2)}',
                         style: GoogleFonts.playfairDisplay(
                           fontSize: 20,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.plum,
+                          color: remitStatus == 'short'
+                              ? AppColors.failed
+                              : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                  ? AppColors.delivered
+                                  : AppColors.plum,
                         ),
                       ),
                       Text(
-                        'Collected from delivered parcels',
+                        remitStatus == 'awaiting_cashier'
+                            ? (remittedTodayAmount > 0
+                                ? '₱${remittedTodayAmount.toStringAsFixed(2)} submitted · Awaiting cashier'
+                                : 'Submitted · Awaiting cashier count')
+                            : (remitStatus == 'short'
+                                ? 'Cash discrepancy reported · Please see cashier'
+                                : (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                                    ? (remittedTodayAmount > 0
+                                        ? '₱${remittedTodayAmount.toStringAsFixed(2)} confirmed by cashier'
+                                        : 'All cash remitted to cashier')
+                                    : (totalCodCollected > 0
+                                        ? 'Collected from delivered parcels'
+                                        : 'No COD cash collected today')),
                         style: GoogleFonts.inter(fontSize: 10.5, color: AppColors.muted),
                       ),
                     ],
                   ),
                 ),
-                OutlinedButton(
-                  onPressed: _openEodReturn,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.plum,
-                    side: const BorderSide(color: AppColors.plum),
+                if (remitStatus == 'awaiting_cashier')
+                  Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    minimumSize: const Size(0, 34),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: Text(
+                      'Awaiting',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFFB45309),
+                      ),
+                    ),
+                  )
+                else if (remitStatus == 'short')
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.failed.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(
+                      'Short',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.failed,
+                      ),
+                    ),
+                  )
+                else if (isRemittedToday || (totalCodCollected == 0 && remittedTodayAmount > 0))
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.delivered.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.check, size: 14, color: AppColors.delivered),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Remitted',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.delivered,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  OutlinedButton(
+                    onPressed: _openEodReturn,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.plum,
+                      side: const BorderSide(color: AppColors.plum),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: const Size(0, 34),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: Text(
+                      'Remit',
+                      style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800),
+                    ),
                   ),
-                  child: Text(
-                    'Remit',
-                    style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w800),
-                  ),
-                ),
               ],
             ),
           ),
@@ -614,7 +771,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onTap: () => setState(() => _statusFilter = 4),
                 ),
                 _FilterChip(
-                  label: 'Exceptions (${failedCount + rescheduledCount})',
+                  label: 'Return/Refund (${failedCount + rescheduledCount})',
                   isSelected: _statusFilter == 5 || _statusFilter == 6,
                   onTap: () => setState(() => _statusFilter = 5),
                 ),
@@ -645,7 +802,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const Icon(Icons.inventory_2_outlined, size: 32, color: AppColors.muted),
                   const SizedBox(height: 8),
                   Text(
-                    'No parcels in this status',
+                    _parcels.isEmpty ? 'No parcels recorded for this date' : 'No parcels in this status',
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -681,6 +838,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required int totalRemaining,
     required DeliveryRequest? nextStop,
   }) {
+    // Empty State: No parcels assigned for this date
+    if (_parcels.isEmpty) {
+      final isToday = MockBackend().isSelectedDateToday;
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.line),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.blush1,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.inventory_2_outlined, color: AppColors.plum, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isToday ? 'NO PARCELS ASSIGNED TODAY' : 'NO PARCELS RECORDED FOR THIS DATE',
+                        style: GoogleFonts.inter(
+                          color: AppColors.muted,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      Text(
+                        isToday ? 'Waiting for logistics hub dispatch & scanning' : 'No delivery activity logged on this date',
+                        style: GoogleFonts.inter(
+                          color: AppColors.ink,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                onPressed: _refreshParcels,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.plum,
+                  side: const BorderSide(color: AppColors.line),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: Text(
+                  'Check Logistics for New Parcels',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12.5),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     // Stage 1: Parcels awaiting load at hub
     if (assignedCount > 0) {
       return Container(
@@ -1163,30 +1392,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 12),
 
-          // Action Button: Stop Details
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () => _openStopDetails(parcel),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.plum,
-                foregroundColor: AppColors.cream,
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                minimumSize: const Size(0, 42),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          // Action Buttons: Navigate (Turn-by-Turn GPS) & Stop Details
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => NavigationService.navigateToAddress(
+                    context,
+                    address: parcel.receiverAddress,
+                    name: parcel.receiverName,
+                    landmark: parcel.landmark,
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.plum,
+                    foregroundColor: AppColors.cream,
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                    minimumSize: const Size(0, 42),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  icon: const Icon(Icons.navigation_rounded, size: 16),
+                  label: Text(
+                    'Navigate',
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.arrow_forward, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _openStopDetails(parcel),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.plum,
+                    side: const BorderSide(color: AppColors.line),
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                    minimumSize: const Size(0, 42),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  icon: const Icon(Icons.arrow_forward, size: 16),
+                  label: Text(
                     'Stop Details',
                     style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),

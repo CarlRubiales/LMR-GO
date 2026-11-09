@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/delivery_request.dart';
 import '../models/delivery_status.dart';
+import '../services/navigation_service.dart';
 import '../theme/app_colors.dart';
 
 class RouteMapView extends StatefulWidget {
@@ -283,7 +284,11 @@ class _RouteMapViewState extends State<RouteMapView> {
                 ),
               ),
               const SizedBox(height: 8),
-              Row(
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
@@ -300,22 +305,47 @@ class _RouteMapViewState extends State<RouteMapView> {
                       ),
                     ),
                   ),
-                  const Spacer(),
-                  FilledButton(
-                    onPressed: () => widget.onSelectStop(selectedParcel),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.plum,
-                      foregroundColor: AppColors.cream,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      minimumSize: const Size(0, 32),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => NavigationService.navigateToAddress(
+                          context,
+                          address: selectedParcel.receiverAddress,
+                          name: selectedParcel.receiverName,
+                          landmark: selectedParcel.landmark,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.plum,
+                          side: const BorderSide(color: AppColors.plum, width: 1.2),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: const Size(0, 32),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                        icon: const Icon(Icons.navigation_rounded, size: 13),
+                        label: Text(
+                          'Navigate',
+                          style: GoogleFonts.inter(fontSize: 10.5, fontWeight: FontWeight.w700),
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      'Stop Details →',
-                      style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700),
-                    ),
+                      FilledButton(
+                        onPressed: () => widget.onSelectStop(selectedParcel),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.plum,
+                          foregroundColor: AppColors.cream,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          minimumSize: const Size(0, 32),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        child: Text(
+                          'Stop Details →',
+                          style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

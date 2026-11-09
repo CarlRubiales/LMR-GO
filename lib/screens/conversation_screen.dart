@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme/app_colors.dart';
 import '../models/chat_preview.dart';
+import '../services/api_service.dart';
 import '../services/mock_backend.dart';
 
 class ConversationScreen extends StatefulWidget {
@@ -26,19 +28,104 @@ class _ConversationScreenState extends State<ConversationScreen> {
   PreviewMessage? replyTo;
   PreviewMessage? editing;
   String? _currentAttachedParcelId;
+  Timer? _realtimeTimer;
+  int _lastKnownId = 0;
+  bool _isFetchingLive = false;
 
   @override
   void initState() {
     super.initState();
     _currentAttachedParcelId = widget.attachedParcelId;
+
+    if (widget.conversation.isHubStaff && ApiService.instance.isAuthenticated) {
+      _fetchLiveMessages();
+      _realtimeTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+        _fetchLiveMessages();
+      });
+    }
   }
 
   @override
   void dispose() {
+    _realtimeTimer?.cancel();
     input.dispose();
     scroll.dispose();
     focus.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchLiveMessages() async {
+    if (!ApiService.instance.isAuthenticated || !widget.conversation.isHubStaff || _isFetchingLive) return;
+    _isFetchingLive = true;
+
+    try {
+      final rawList = await ApiService.instance.fetchMessages(
+        parcelId: _currentAttachedParcelId,
+      );
+
+      if (!mounted) {
+        _isFetchingLive = false;
+        return;
+      }
+
+      if (rawList.isNotEmpty) {
+        final liveMessages = <PreviewMessage>[];
+        int maxId = _lastKnownId;
+        bool hasNewIncoming = false;
+
+        for (final m in rawList) {
+          final id = m['id'] as int? ?? 0;
+          final text = (m['message'] ?? m['text'] ?? '').toString();
+          final isMine = m['is_mine'] == true;
+          final senderName = (m['sender_name'] ?? '').toString();
+          final parcelId = m['parcel_id']?.toString() ?? m['parcel_number']?.toString();
+          final timeStr = m['created_at']?.toString();
+          final time = timeStr != null
+              ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now())
+              : DateTime.now();
+
+          if (id > maxId) {
+            if (_lastKnownId > 0 && !isMine) {
+              hasNewIncoming = true;
+            }
+            maxId = id;
+          }
+
+          liveMessages.add(
+            PreviewMessage(
+              id: id,
+              text: text,
+              isMine: isMine,
+              time: time,
+              parcelId: parcelId,
+              senderName: senderName,
+            ),
+          );
+        }
+
+        if (liveMessages.isNotEmpty) {
+          setState(() {
+            widget.conversation.messages
+              ..clear()
+              ..addAll(liveMessages);
+            _lastKnownId = maxId;
+          });
+
+          if (hasNewIncoming) {
+            HapticFeedback.lightImpact();
+            if (scroll.hasClients) {
+              scroll.animateTo(
+                0,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    _isFetchingLive = false;
   }
 
   void notice(String text) {
@@ -83,31 +170,42 @@ class _ConversationScreenState extends State<ConversationScreen> {
     });
 
     if (isHubStaff) {
-      Future.delayed(const Duration(milliseconds: 400), () async {
-        final reply = await MockBackend().sendHubMessage(
+      if (ApiService.instance.isAuthenticated) {
+        // Live Real-Time sync with logistics backend
+        ApiService.instance.sendHubMessage(
           message: text,
           parcelId: parcelIdToSend,
-        );
-        if (mounted) {
-          setState(() {
-            widget.conversation.messages.add(
-              PreviewMessage(
-                text: reply,
-                isMine: false,
-                time: DateTime.now(),
-                parcelId: parcelIdToSend,
-              ),
-            );
-          });
-          if (scroll.hasClients) {
-            scroll.animateTo(
-              0,
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOut,
-            );
+        ).then((_) {
+          if (mounted) _fetchLiveMessages();
+        });
+      } else {
+        // Fallback simulated reply for preview/widget tests
+        Future.delayed(const Duration(milliseconds: 400), () async {
+          final reply = await MockBackend().sendHubMessage(
+            message: text,
+            parcelId: parcelIdToSend,
+          );
+          if (mounted) {
+            setState(() {
+              widget.conversation.messages.add(
+                PreviewMessage(
+                  text: reply,
+                  isMine: false,
+                  time: DateTime.now(),
+                  parcelId: parcelIdToSend,
+                ),
+              );
+            });
+            if (scroll.hasClients) {
+              scroll.animateTo(
+                0,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            }
           }
-        }
-      });
+        });
+      }
     }
   }
 
@@ -348,16 +446,37 @@ class _ConversationScreenState extends State<ConversationScreen> {
         top: false,
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 16),
-              color: AppColors.softBackground,
-              child: const Text(
-                'Preview conversation · only visible to you',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 10, color: AppColors.muted),
+            if (ApiService.instance.isAuthenticated && widget.conversation.isHubStaff)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 12),
+                color: AppColors.softBackground,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.delivered,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Flexible(
+                      child: Text(
+                        'Live Logistics Dispatch · Instant Two-Way Sync',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.delivered,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
             Expanded(
               child: messages.isEmpty
                   ? const Center(child: Text('No messages yet. Say hello!'))
@@ -439,6 +558,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
+                                              if (!m.isMine && m.senderName != null && m.senderName!.isNotEmpty)
+                                                Padding(
+                                                  padding: const EdgeInsets.only(bottom: 4),
+                                                  child: Text(
+                                                    m.senderName!,
+                                                    style: const TextStyle(
+                                                      fontSize: 10,
+                                                      fontWeight: FontWeight.w800,
+                                                      color: AppColors.plum,
+                                                      letterSpacing: 0.3,
+                                                    ),
+                                                  ),
+                                                ),
                                               if (m.reply != null && !m.unsent)
                                                 Container(
                                                   margin: const EdgeInsets.only(

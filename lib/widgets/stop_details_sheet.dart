@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/delivery_request.dart';
 import '../models/delivery_status.dart';
 import '../services/mock_backend.dart';
+import '../services/navigation_service.dart';
 import '../theme/app_colors.dart';
 import 'failed_delivery_sheet.dart';
 import 'parcel_scanner_sheet.dart';
@@ -38,18 +39,12 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
   }
 
   Future<void> _launchMaps() async {
-    final query = Uri.encodeComponent('${_currentParcel.receiverAddress}, Philippines');
-    final googleMapsUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
-
-    try {
-      if (await canLaunchUrl(googleMapsUrl)) {
-        await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
-      } else {
-        _showCopyAddressDialog();
-      }
-    } catch (_) {
-      _showCopyAddressDialog();
-    }
+    await NavigationService.navigateToAddress(
+      context,
+      address: _currentParcel.receiverAddress,
+      name: _currentParcel.receiverName,
+      landmark: _currentParcel.landmark,
+    );
   }
 
   Future<void> _launchCall() async {
@@ -82,23 +77,6 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
     } catch (_) {
       _showPhoneDialog(phone);
     }
-  }
-
-  void _showCopyAddressDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.cream,
-        title: Text('Navigation Target', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
-        content: Text(_currentParcel.receiverAddress, style: GoogleFonts.inter(fontSize: 13)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showPhoneDialog(String phone) {
@@ -169,13 +147,14 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
     );
   }
 
-  void _openFailed() {
+  void _openFailed({bool isPostDelivery = false}) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => FailedDeliverySheet(
         parcel: _currentParcel,
+        isPostDelivery: isPostDelivery,
         onFailedRecorded: () {
           setState(() {
             _currentParcel = _currentParcel.copyWith(stage: DeliveryStage.failed);
@@ -653,46 +632,38 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
       );
     }
 
-    // Stage 2: Out for delivery (or arrived) -> "Deliver Parcel" (Green) OR "Report Failed" (Red)
+    // Stage 2: Out for delivery (or arrived) -> "Delivered" only (Full width green button)
     if (stage == DeliveryStage.outForDelivery || stage == DeliveryStage.arrived) {
-      return Row(
+      return Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            flex: 3,
-            child: SizedBox(
-              height: 52,
-              child: FilledButton.icon(
-                onPressed: _openPod,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.delivered,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                icon: const Icon(Icons.check_circle_outline, size: 20),
-                label: Text(
-                  'Deliver Parcel',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 14),
-                ),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: _openPod,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.delivered,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.check_circle_outline, size: 20),
+              label: Text(
+                'Delivered',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 15),
               ),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 2,
-            child: SizedBox(
-              height: 52,
-              child: OutlinedButton.icon(
-                onPressed: _openFailed,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.failed,
-                  side: const BorderSide(color: AppColors.failed, width: 1.5),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                icon: const Icon(Icons.cancel_outlined, size: 18),
-                label: Text(
-                  'Failed',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 14),
-                ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: () => _openFailed(isPostDelivery: false),
+            icon: const Icon(Icons.cancel_outlined, size: 14, color: AppColors.muted),
+            label: Text(
+              'Unable to deliver? Report issue',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.muted,
               ),
             ),
           ),
@@ -700,32 +671,89 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
       );
     }
 
-    // Stage 3: Already Completed or Failed
-    final isDone = stage == DeliveryStage.delivered || stage == DeliveryStage.completed;
+    // Stage 3: Already Delivered -> Show Completed Status AND "Return/Refund" button
+    if (stage == DeliveryStage.delivered || stage == DeliveryStage.completed) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.deliveredSoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.check_circle,
+                  color: AppColors.delivered,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Delivery Completed · POD On File',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                      color: AppColors.delivered,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: () => _openFailed(isPostDelivery: true),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.failed,
+                side: const BorderSide(color: AppColors.failed, width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.assignment_return_outlined, size: 18),
+              label: Text(
+                'Return/Refund',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 13.5),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Stage 4: Failed / Rescheduled / Return/Refund recorded
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
-        color: isDone ? AppColors.deliveredSoft : AppColors.failedSoft,
+        color: AppColors.failedSoft,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            isDone ? Icons.check_circle : Icons.error_outline,
-            color: isDone ? AppColors.delivered : AppColors.failed,
+          const Icon(
+            Icons.assignment_return_outlined,
+            color: AppColors.failed,
             size: 20,
           ),
           const SizedBox(width: 8),
-          Text(
-            isDone
-                ? 'Delivery Completed · POD On File'
-                : 'Delivery Issue Recorded (${_currentParcel.failureReason ?? "Returned to Hub"})',
-            style: GoogleFonts.inter(
-              fontWeight: FontWeight.w800,
-              fontSize: 12.5,
-              color: isDone ? AppColors.delivered : AppColors.failed,
+          Flexible(
+            child: Text(
+              'Return/Refund Recorded (${_currentParcel.failureReason ?? "Pending Hub Review"})',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w800,
+                fontSize: 12.5,
+                color: AppColors.failed,
+              ),
             ),
           ),
         ],

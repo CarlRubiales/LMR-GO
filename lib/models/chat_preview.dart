@@ -9,6 +9,8 @@ class PreviewMessage {
     required this.time,
     this.reply,
     this.parcelId,
+    this.id,
+    this.senderName,
   });
 
   String text;
@@ -16,6 +18,8 @@ class PreviewMessage {
   final DateTime time;
   final String? reply;
   final String? parcelId;
+  final int? id;
+  final String? senderName;
   bool edited = false;
   bool unsent = false;
 }

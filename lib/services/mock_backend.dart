@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../models/delivery_request.dart';
@@ -9,7 +11,221 @@ import 'offline_queue_service.dart';
 class MockBackend {
   static final MockBackend _instance = MockBackend._internal();
   factory MockBackend() => _instance;
-  MockBackend._internal();
+  MockBackend._internal() {
+    _initDateParcels();
+  }
+
+  static String dateKey(DateTime dt) =>
+      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+
+  final ValueNotifier<DateTime> selectedDateNotifier =
+      ValueNotifier<DateTime>(DateTime.now());
+
+  DateTime get selectedDate => selectedDateNotifier.value;
+
+  bool get isSelectedDateToday {
+    final now = DateTime.now();
+    final sel = selectedDateNotifier.value;
+    return sel.year == now.year && sel.month == now.month && sel.day == now.day;
+  }
+
+  void setSelectedDate(DateTime date) {
+    selectedDateNotifier.value = DateTime(date.year, date.month, date.day);
+    getTodayRunParcels(date: selectedDateNotifier.value);
+  }
+
+  void jumpToToday() {
+    setSelectedDate(DateTime.now());
+  }
+
+  final Map<String, List<DeliveryRequest>> _parcelsByDate = {};
+  final Set<String> _codRemittedDates = <String>{};
+  final Map<String, double> _remittedCodAmounts = <String, double>{};
+  final Map<String, DateTime> _remittedCodTimestamps = <String, DateTime>{};
+  final Map<String, String> _remittanceStatuses = <String, String>{}; // awaiting_cashier, remitted, short, over, not_remitted
+  final Map<String, double> _remittanceDifferences = <String, double>{};
+  final Map<String, String> _remittanceCashiers = <String, String>{};
+
+  bool isCodRemittedForDate(DateTime date) {
+    if (hasUnremittedCod(date)) return false;
+    final key = dateKey(date);
+    return _codRemittedDates.contains(key) || _remittanceStatuses[key] == 'awaiting_cashier' || _remittanceStatuses[key] == 'remitted';
+  }
+
+  bool hasUnremittedCod(DateTime date) {
+    return getUnremittedCodAmount(date) > 0;
+  }
+
+  double getUnremittedCodAmount(DateTime date) {
+    final key = dateKey(date);
+    final currentList = _parcelsByDate[key] ?? _runtimeParcels;
+    return currentList
+        .where((p) =>
+            (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) &&
+            p.isCod &&
+            !p.isCodRemitted)
+        .fold(0.0, (sum, p) => sum + p.codAmount);
+  }
+
+  String getRemittanceStatus(DateTime date) {
+    if (hasUnremittedCod(date)) {
+      return 'not_remitted';
+    }
+    final key = dateKey(date);
+    if (_remittanceStatuses.containsKey(key)) {
+      return _remittanceStatuses[key]!;
+    }
+    if (_codRemittedDates.contains(key)) {
+      return 'remitted';
+    }
+    return 'not_remitted';
+  }
+
+  double getRemittanceDifference(DateTime date) {
+    final key = dateKey(date);
+    return _remittanceDifferences[key] ?? 0.0;
+  }
+
+  String? getRemittanceCashier(DateTime date) {
+    final key = dateKey(date);
+    return _remittanceCashiers[key];
+  }
+
+  double getRemittedCodAmount(DateTime date) {
+    final key = dateKey(date);
+    return _remittedCodAmounts[key] ?? 0.0;
+  }
+
+  DateTime? getRemittedCodTimestamp(DateTime date) {
+    final key = dateKey(date);
+    return _remittedCodTimestamps[key];
+  }
+
+  /// Check server for latest cashier confirmation status
+  Future<String?> checkServerRemittanceStatus([DateTime? date]) async {
+    final targetDate = date ?? selectedDate;
+    final key = dateKey(targetDate);
+    if (!ApiService.instance.isAuthenticated) return _remittanceStatuses[key];
+
+    try {
+      final res = await ApiService.instance.getRemittanceStatus(date: key);
+      if (res != null && res['status'] != null) {
+        final serverStatus = res['status'] as String;
+        _remittanceStatuses[key] = serverStatus;
+        if (serverStatus == 'remitted' || serverStatus == 'awaiting_cashier') {
+          _codRemittedDates.add(key);
+        }
+        if (res['difference'] != null) {
+          _remittanceDifferences[key] = (res['difference'] as num).toDouble();
+        }
+        if (res['cashier_name'] != null) {
+          _remittanceCashiers[key] = res['cashier_name'].toString();
+        }
+        if (res['counted_amount'] != null) {
+          _remittedCodAmounts[key] = (res['counted_amount'] as num).toDouble();
+        } else if (res['declared_amount'] != null) {
+          _remittedCodAmounts[key] = (res['declared_amount'] as num).toDouble();
+        }
+        return serverStatus;
+      }
+    } catch (_) {}
+    return _remittanceStatuses[key];
+  }
+
+  /// Remit COD cash collected for a date to the hub cashier (Two-step submission)
+  Future<void> remitCodCash({
+    DateTime? date,
+    double? amount,
+    String? hubCashierNote,
+    List<String>? parcelIds,
+  }) async {
+    final targetDate = date ?? selectedDate;
+    final key = dateKey(targetDate);
+    final currentList = _parcelsByDate[key] ?? _runtimeParcels;
+
+    final unremittedTotal = currentList
+        .where((p) =>
+            (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) &&
+            p.isCod &&
+            !p.isCodRemitted)
+        .fold(0.0, (sum, p) => sum + p.codAmount);
+
+    final remittedAmount = amount ?? unremittedTotal;
+    _codRemittedDates.add(key);
+    _remittedCodAmounts[key] = remittedAmount;
+    _remittedCodTimestamps[key] = DateTime.now();
+    _remittanceStatuses[key] = 'awaiting_cashier';
+
+    // Mark all delivered COD parcels for this date as remitted
+    for (int i = 0; i < currentList.length; i++) {
+      final p = currentList[i];
+      if ((p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && p.isCod) {
+        currentList[i] = p.copyWith(isCodRemitted: true);
+      }
+    }
+
+    _parcelsByDate[key] = currentList;
+    _runtimeParcels.clear();
+    _runtimeParcels.addAll(currentList);
+    parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+
+    if (ApiService.instance.isAuthenticated) {
+      try {
+        final res = await ApiService.instance.submitRemittance(
+          declaredAmount: remittedAmount,
+          date: key,
+          parcelIds: parcelIds,
+          note: hubCashierNote,
+          idempotencyKey: 'remit_${key}_${DateTime.now().millisecondsSinceEpoch}',
+        );
+        if (res != null && res['status'] != null) {
+          _remittanceStatuses[key] = res['status'] as String;
+          if (res['difference'] != null) {
+            _remittanceDifferences[key] = (res['difference'] as num).toDouble();
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  void _initDateParcels() {
+    _parcelsByDate['2026-10-14'] = [
+      const DeliveryRequest(
+        id: 'LMR-88210',
+        store: 'Lumora Sorting Center',
+        pickup: 'Hub Sorting Bin A-02',
+        dropoff: '12 Pioneer St., Mandaluyong City',
+        fee: '₱150.00',
+        distance: '2.8 km',
+        eta: '10 min',
+        stage: DeliveryStage.delivered,
+        recipientName: 'Grace Tan',
+        recipientPhone: '+63 917 111 2233',
+        area: 'Mandaluyong',
+        codAmount: 0.0,
+        isCod: false,
+        stopOrder: 1,
+        barcode: 'LMR8821001PH',
+      ),
+      const DeliveryRequest(
+        id: 'LMR-88208',
+        store: 'Lumora Sorting Center',
+        pickup: 'Hub Sorting Bin B-05',
+        dropoff: '55 Shaw Blvd., Pasig City',
+        fee: '₱150.00',
+        distance: '3.5 km',
+        eta: '15 min',
+        stage: DeliveryStage.delivered,
+        recipientName: 'David Lee',
+        recipientPhone: '+63 918 222 3344',
+        area: 'Pasig',
+        codAmount: 850.0,
+        isCod: true,
+        stopOrder: 2,
+        barcode: 'LMR8820802PH',
+      ),
+    ];
+  }
 
   static final List<DeliveryRequest> _defaultParcels = [
     const DeliveryRequest(
@@ -105,19 +321,21 @@ class MockBackend {
     ),
   ];
 
-  final List<DeliveryRequest> _runtimeParcels = List<DeliveryRequest>.from(_defaultParcels);
-  final ValueNotifier<List<DeliveryRequest>> parcelsNotifier =
-      ValueNotifier<List<DeliveryRequest>>(List<DeliveryRequest>.unmodifiable(_defaultParcels));
+  final List<DeliveryRequest> _runtimeParcels = <DeliveryRequest>[];
+  late final ValueNotifier<List<DeliveryRequest>> parcelsNotifier =
+      ValueNotifier<List<DeliveryRequest>>(const <DeliveryRequest>[]);
 
   Timer? _autoSyncTimer;
 
-  void startAutoSync({Duration interval = const Duration(seconds: 4)}) {
+  void startAutoSync({Duration interval = const Duration(seconds: 3)}) {
     if (!ApiService.instance.isAuthenticated) return;
     if (_autoSyncTimer != null && _autoSyncTimer!.isActive) return;
     _autoSyncTimer = Timer.periodic(interval, (_) async {
       if (ApiService.instance.isAuthenticated) {
         await getTodayRunParcels();
         await OfflineQueueService.instance.flushQueue();
+      } else {
+        stopAutoSync();
       }
     });
   }
@@ -128,9 +346,15 @@ class MockBackend {
   }
 
   void reset() {
+    stopAutoSync();
+    selectedDateNotifier.value = DateTime.now();
     _runtimeParcels.clear();
-    _runtimeParcels.addAll(_defaultParcels);
-    parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+    _parcelsByDate.clear();
+    _codRemittedDates.clear();
+    _remittedCodAmounts.clear();
+    _remittedCodTimestamps.clear();
+    _initDateParcels();
+    parcelsNotifier.value = const <DeliveryRequest>[];
   }
 
   static const Map<String, String> _defaultEarnings = {
@@ -160,29 +384,38 @@ class MockBackend {
     },
   ];
 
-  /// Get parcels assigned to the rider for Today's Run
-  Future<List<DeliveryRequest>> getTodayRunParcels() async {
+  /// Get parcels assigned to the rider for the selected Run (defaults to Today's Run)
+  Future<List<DeliveryRequest>> getTodayRunParcels({DateTime? date}) async {
+    final targetDate = date ?? selectedDate;
+    final key = dateKey(targetDate);
+
     if (ApiService.instance.isAuthenticated) {
       try {
-        final apiDeliveries = await ApiService.instance.getAssignedDeliveries();
+        final apiDeliveries = await ApiService.instance.getAssignedDeliveries(date: key);
         if (apiDeliveries != null) {
           final updatedList = <DeliveryRequest>[];
+          final existingLocal = _parcelsByDate[key] ?? <DeliveryRequest>[];
+
           for (int i = 0; i < apiDeliveries.length; i++) {
             final item = apiDeliveries[i];
-            final localIdx = _runtimeParcels.indexWhere((p) =>
+            final localIdx = existingLocal.indexWhere((p) =>
                 p.id == item.id ||
                 p.barcode == item.barcode ||
                 p.trackingNumber == item.trackingNumber);
             if (localIdx != -1) {
-              final local = _runtimeParcels[localIdx];
+              final local = existingLocal[localIdx];
               updatedList.add(item.copyWith(
-                stage: local.stage,
-                failureReason: local.failureReason ?? item.failureReason,
-                failureNotes: local.failureNotes ?? item.failureNotes,
+                stage: item.stage,
+                isCodRemitted: item.isCodRemitted || local.isCodRemitted,
+                failureReason: item.failureReason ?? local.failureReason,
+                failureNotes: item.failureNotes ?? local.failureNotes,
                 podPhotoPath: local.podPhotoPath ?? item.podPhotoPath,
+                podVideoPath: local.podVideoPath ?? item.podVideoPath,
                 podSignature: local.podSignature ?? item.podSignature,
                 podOtp: local.podOtp ?? item.podOtp,
-                stopOrder: item.stopOrder > 0 ? item.stopOrder : i + 1,
+                stopOrder: item.stopOrder > 0
+                    ? item.stopOrder
+                    : (local.stopOrder > 0 ? local.stopOrder : i + 1),
               ));
             } else {
               updatedList.add(item.copyWith(
@@ -190,6 +423,7 @@ class MockBackend {
               ));
             }
           }
+          _parcelsByDate[key] = updatedList;
           _runtimeParcels.clear();
           _runtimeParcels.addAll(updatedList);
           final readonlyList = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
@@ -198,7 +432,17 @@ class MockBackend {
         }
       } catch (_) {}
     }
-    return List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+
+    if (!_parcelsByDate.containsKey(key)) {
+      _parcelsByDate[key] = <DeliveryRequest>[];
+    }
+
+    final localList = _parcelsByDate[key] ?? [];
+    _runtimeParcels.clear();
+    _runtimeParcels.addAll(localList);
+    final readonlyList = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+    parcelsNotifier.value = readonlyList;
+    return readonlyList;
   }
 
   /// Backward-compatible alias for getAvailableRequests
@@ -213,34 +457,72 @@ class MockBackend {
     String? failureReason,
     String? failureNotes,
     String? podPhotoPath,
+    String? podVideoPath,
     String? podSignature,
     String? podOtp,
     double? codAmountCollected,
   }) async {
-    final idx = _runtimeParcels.indexWhere((p) =>
+    final key = dateKey(selectedDate);
+    final currentList = _parcelsByDate[key] ?? _runtimeParcels;
+    final idx = currentList.indexWhere((p) =>
         p.id == parcelId ||
         p.barcode == parcelId ||
         p.trackingNumber == parcelId ||
         p.id == '#$parcelId' ||
         parcelId == '#${p.id}');
     if (idx != -1) {
-      final existing = _runtimeParcels[idx];
-      _runtimeParcels[idx] = existing.copyWith(
+      final existing = currentList[idx];
+      final updated = existing.copyWith(
         stage: newStage,
         failureReason: failureReason ?? existing.failureReason,
         failureNotes: failureNotes ?? existing.failureNotes,
         podPhotoPath: podPhotoPath ?? existing.podPhotoPath,
+        podVideoPath: podVideoPath ?? existing.podVideoPath,
         podSignature: podSignature ?? existing.podSignature,
         podOtp: podOtp ?? existing.podOtp,
         deliveredAt: (newStage == DeliveryStage.delivered || newStage == DeliveryStage.completed)
             ? DateTime.now()
             : existing.deliveredAt,
       );
+      currentList[idx] = updated;
+      _parcelsByDate[key] = currentList;
+      _runtimeParcels.clear();
+      _runtimeParcels.addAll(currentList);
       parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+    }
+
+    String? photoBase64;
+    if (!kIsWeb && podPhotoPath != null && podPhotoPath.isNotEmpty && !podPhotoPath.startsWith('http')) {
+      try {
+        final photoFile = File(podPhotoPath);
+        if (await photoFile.exists()) {
+          final bytes = await photoFile.readAsBytes();
+          final ext = podPhotoPath.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+          photoBase64 = 'data:image/$ext;base64,${base64Encode(bytes)}';
+        }
+      } catch (_) {}
+    }
+
+    String? videoBase64;
+    if (!kIsWeb && podVideoPath != null && podVideoPath.isNotEmpty && !podVideoPath.startsWith('http')) {
+      try {
+        final videoFile = File(podVideoPath);
+        if (await videoFile.exists()) {
+          final bytes = await videoFile.readAsBytes();
+          // Cap inline base64 at 18MB so JSON payloads stay within HTTP limits
+          if (bytes.length <= 18 * 1024 * 1024) {
+            videoBase64 = 'data:video/mp4;base64,${base64Encode(bytes)}';
+          }
+        }
+      } catch (_) {}
     }
 
     final riderId = ApiService.instance.currentUser?['id']?.toString() ?? 'RIDER-01';
     final statusWire = DeliveryStatus.fromStage(newStage).code;
+    final isReturnRefund = newStage == DeliveryStage.failed ||
+        newStage == DeliveryStage.returningToHub ||
+        newStage == DeliveryStage.returnedToHub;
+
     final payload = DeliveryStatusPayload(
       parcelId: parcelId,
       riderId: riderId,
@@ -249,7 +531,12 @@ class MockBackend {
       latitude: 14.5839,
       longitude: 121.0543,
       failureReason: failureReason,
+      failureNotes: failureNotes,
       proofUrl: podPhotoPath,
+      proofVideoUrl: podVideoPath,
+      proofPhotoBase64: photoBase64,
+      proofVideoBase64: videoBase64,
+      isReturnRefund: isReturnRefund ? true : null,
       codAmount: codAmountCollected,
     );
 
@@ -258,8 +545,10 @@ class MockBackend {
 
     if (ApiService.instance.isAuthenticated) {
       try {
-        await ApiService.instance.syncStatusPayload(payload);
-        await ApiService.instance.updateDeliveryStatus(parcelId, newStage);
+        final synced = await ApiService.instance.syncStatusPayload(payload);
+        if (!synced) {
+          await ApiService.instance.updateDeliveryStatus(parcelId, newStage);
+        }
       } catch (_) {}
     }
   }
@@ -280,18 +569,36 @@ class MockBackend {
     );
   }
 
-  Future<Map<String, String>> getEarnings() async {
+  Future<Map<String, String>> getEarnings({DateTime? date}) async {
+    final targetDate = date ?? selectedDate;
+    final key = dateKey(targetDate);
+    final nowKey = dateKey(DateTime.now());
+
     if (ApiService.instance.isAuthenticated) {
       try {
         final data = await ApiService.instance.getEarnings();
-        return {
-          'today': (data['today'] as String?) ?? _defaultEarnings['today']!,
-          'balance': (data['balance'] as String?) ?? _defaultEarnings['balance']!,
-          'completed': (data['completed'] as String?) ?? _defaultEarnings['completed']!,
-        };
+        if (key == nowKey) {
+          return {
+            'today': (data['today'] as String?) ?? '₱0.00',
+            'balance': (data['balance'] as String?) ?? '₱0.00',
+            'completed': (data['completed'] as String?) ?? '0 deliveries completed',
+          };
+        }
       } catch (_) {}
     }
-    return _defaultEarnings;
+
+    // Calculation for selected date
+    final parcelsForDate = _parcelsByDate[key] ?? [];
+    final completed = parcelsForDate
+        .where((p) => p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed)
+        .length;
+    // Base commission rate for rider is ₱20.00 per delivered parcel
+    final earned = completed * 20.0;
+    return {
+      'today': '₱${earned.toStringAsFixed(2)}',
+      'balance': '₱${earned.toStringAsFixed(2)}',
+      'completed': '$completed deliveries completed',
+    };
   }
 
   Future<List<Map<String, String>>> getHistory() async {
@@ -320,6 +627,10 @@ class MockBackend {
         orCrPhoto: payload['or_cr_photo'] as String?,
         otp: payload['otp'] as String?,
         hubId: payload['hub_id'] as int?,
+        province: payload['province'] as String?,
+        municipality: payload['municipality'] as String?,
+        barangay: payload['barangay'] as String?,
+        street: payload['street'] as String?,
       );
     }
   }

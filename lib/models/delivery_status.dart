@@ -58,7 +58,7 @@ enum DeliveryStatus {
       case DeliveryStatus.completed:
         return 'Delivered';
       case DeliveryStatus.deliveryFailed:
-        return 'Failed';
+        return 'Return/Refund';
       case DeliveryStatus.rescheduled:
         return 'Rescheduled';
       case DeliveryStatus.returnedToHub:
@@ -79,7 +79,7 @@ enum DeliveryStatus {
       case DeliveryStatus.delivered:
         return 'DELIVERED';
       case DeliveryStatus.deliveryFailed:
-        return 'DELIVERY FAILED';
+        return 'RETURN/REFUND';
       case DeliveryStatus.rescheduled:
         return 'RESCHEDULED';
       case DeliveryStatus.returningToHub:
@@ -185,6 +185,9 @@ enum DeliveryStatus {
       case 'FAILED':
       case 'DELIVERY_FAILED':
       case 'EXCEPTION':
+      case 'RETURN_REFUND':
+      case 'RETURN/REFUND':
+      case 'RETURN_AND_REFUND':
         return DeliveryStatus.deliveryFailed;
       case 'RESCHEDULED':
         return DeliveryStatus.rescheduled;
@@ -264,7 +267,12 @@ class DeliveryStatusPayload {
     required this.latitude,
     required this.longitude,
     this.failureReason,
+    this.failureNotes,
     this.proofUrl,
+    this.proofVideoUrl,
+    this.proofPhotoBase64,
+    this.proofVideoBase64,
+    this.isReturnRefund,
     this.codAmount,
   });
 
@@ -275,7 +283,12 @@ class DeliveryStatusPayload {
   final double latitude;
   final double longitude;
   final String? failureReason;
+  final String? failureNotes;
   final String? proofUrl;
+  final String? proofVideoUrl;
+  final String? proofPhotoBase64;
+  final String? proofVideoBase64;
+  final bool? isReturnRefund;
   final double? codAmount;
 
   Map<String, dynamic> toJson() => {
@@ -286,7 +299,12 @@ class DeliveryStatusPayload {
         'latitude': latitude,
         'longitude': longitude,
         if (failureReason != null) 'failureReason': failureReason,
+        if (failureNotes != null) 'failureNotes': failureNotes,
         if (proofUrl != null) 'proofUrl': proofUrl,
+        if (proofVideoUrl != null) 'proofVideoUrl': proofVideoUrl,
+        if (proofPhotoBase64 != null) 'proofPhotoBase64': proofPhotoBase64,
+        if (proofVideoBase64 != null) 'proofVideoBase64': proofVideoBase64,
+        if (isReturnRefund != null) 'isReturnRefund': isReturnRefund,
         if (codAmount != null) 'codAmount': codAmount,
       };
 
@@ -299,7 +317,12 @@ class DeliveryStatusPayload {
       latitude: double.tryParse(json['latitude']?.toString() ?? '0.0') ?? 0.0,
       longitude: double.tryParse(json['longitude']?.toString() ?? '0.0') ?? 0.0,
       failureReason: json['failureReason']?.toString(),
+      failureNotes: json['failureNotes']?.toString(),
       proofUrl: json['proofUrl']?.toString(),
+      proofVideoUrl: json['proofVideoUrl']?.toString(),
+      proofPhotoBase64: json['proofPhotoBase64']?.toString(),
+      proofVideoBase64: json['proofVideoBase64']?.toString(),
+      isReturnRefund: json['isReturnRefund'] as bool?,
       codAmount: json['codAmount'] != null
           ? double.tryParse(json['codAmount'].toString())
           : null,

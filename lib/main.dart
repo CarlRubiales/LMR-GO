@@ -13,6 +13,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/deliveries_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/registration_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/mock_backend.dart';
 import 'services/offline_queue_service.dart';
@@ -23,10 +24,36 @@ void main() async {
   runApp(const LmrGoApp(initialLogin: true));
 }
 
-class LmrGoApp extends StatelessWidget {
-  const LmrGoApp({super.key, this.initialLogin = false});
+class LmrGoApp extends StatefulWidget {
+  const LmrGoApp({
+    super.key,
+    this.initialLogin = false,
+    this.showSplash = true,
+  });
 
   final bool initialLogin;
+  final bool showSplash;
+
+  @override
+  State<LmrGoApp> createState() => _LmrGoAppState();
+}
+
+class _LmrGoAppState extends State<LmrGoApp> {
+  late bool _showingSplash;
+
+  @override
+  void initState() {
+    super.initState();
+    _showingSplash = widget.showSplash;
+  }
+
+  void _onSplashFinished() {
+    if (mounted) {
+      setState(() {
+        _showingSplash = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +61,20 @@ class LmrGoApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'LMR GO',
       theme: AppTheme.light,
-      home: RiderShell(startAtLogin: initialLogin),
+      home: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 450),
+        switchInCurve: Curves.easeIn,
+        switchOutCurve: Curves.easeOut,
+        child: _showingSplash
+            ? SplashScreen(
+                key: const ValueKey('splash_screen'),
+                onFinish: _onSplashFinished,
+              )
+            : RiderShell(
+                key: const ValueKey('rider_shell'),
+                startAtLogin: widget.initialLogin,
+              ),
+      ),
     );
   }
 }

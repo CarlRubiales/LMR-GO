@@ -10,7 +10,7 @@ import '../widgets/eod_return_sheet.dart';
 import '../widgets/hub_pickup_sheet.dart';
 import '../widgets/parcel_card.dart';
 import '../widgets/parcel_scanner_sheet.dart';
-import '../widgets/route_map_view.dart';
+import '../widgets/rider_date_selector.dart';
 import '../widgets/stop_details_sheet.dart';
 
 class DeliveriesScreen extends StatefulWidget {
@@ -36,7 +36,6 @@ class DeliveriesScreen extends StatefulWidget {
 class _DeliveriesScreenState extends State<DeliveriesScreen> {
   // 0: To Load, 1: Out for Delivery, 2: Delivered, 3: Failed/Rescheduled
   int _activeTab = 0;
-  bool _isMapView = false;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   List<DeliveryRequest> _allParcels = [];
@@ -49,6 +48,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       ..sort((a, b) => a.stopOrder.compareTo(b.stopOrder));
     _isLoading = false;
     MockBackend().parcelsNotifier.addListener(_onParcelsChanged);
+    MockBackend().selectedDateNotifier.addListener(_onDateChanged);
     MockBackend().startAutoSync();
     _loadParcels();
     _searchController.addListener(() {
@@ -56,6 +56,11 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
         _searchQuery = _searchController.text.trim().toLowerCase();
       });
     });
+  }
+
+  void _onDateChanged() {
+    if (!mounted) return;
+    _loadParcels();
   }
 
   void _onParcelsChanged() {
@@ -75,6 +80,8 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
   @override
   void dispose() {
     MockBackend().parcelsNotifier.removeListener(_onParcelsChanged);
+    MockBackend().selectedDateNotifier.removeListener(_onDateChanged);
+    MockBackend().stopAutoSync();
     _searchController.dispose();
     super.dispose();
   }
@@ -230,6 +237,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const RiderDateSelector(),
           // Offline Queue Banner (if any updates are pending sync)
           ValueListenableBuilder<int>(
             valueListenable: OfflineQueueService.instance.pendingCount,
@@ -296,9 +304,11 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  child: InkWell(
+                    onTap: _openHubPickup,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                       Text(
                         toLoadCount > 0
                             ? '$toLoadCount awaiting load'
@@ -323,7 +333,8 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 6),
+              ),
+              const SizedBox(width: 6),
                 if (toLoadCount > 0)
                   FilledButton.icon(
                     onPressed: () => _openBarcodeScanner(),
@@ -373,7 +384,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                 _buildTabItem(0, 'To Load', toLoadCount),
                 _buildTabItem(1, 'Active', outCount),
                 _buildTabItem(2, 'Delivered', deliveredCount),
-                _buildTabItem(3, 'Failed', failedCount),
+                _buildTabItem(3, 'Return/Refund', failedCount),
               ],
             ),
           ),
@@ -414,7 +425,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Refresh and Toggle between List and Route Map View
+              // Refresh and Barcode Scan Action Buttons
               Container(
                 height: 42,
                 decoration: BoxDecoration(
@@ -434,24 +445,6 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                       onPressed: _loadParcels,
                     ),
                     IconButton(
-                      tooltip: 'List view',
-                      icon: Icon(
-                        Icons.view_list,
-                        size: 20,
-                        color: !_isMapView ? AppColors.plum : AppColors.muted,
-                      ),
-                      onPressed: () => setState(() => _isMapView = false),
-                    ),
-                    IconButton(
-                      tooltip: 'Route map view',
-                      icon: Icon(
-                        Icons.map_outlined,
-                        size: 20,
-                        color: _isMapView ? AppColors.plum : AppColors.muted,
-                      ),
-                      onPressed: () => setState(() => _isMapView = true),
-                    ),
-                    IconButton(
                       tooltip: 'Scan parcel barcode',
                       icon: const Icon(
                         Icons.qr_code_scanner,
@@ -467,20 +460,12 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Main Content: List View or Route Map View
+          // Main Content: Fast Parcel List View
           if (_isLoading)
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(40),
                 child: CircularProgressIndicator(color: AppColors.plum),
-              ),
-            )
-          else if (_isMapView)
-            SizedBox(
-              height: 420,
-              child: RouteMapView(
-                parcels: _allParcels,
-                onSelectStop: _openStopDetails,
               ),
             )
           else ...[
@@ -509,7 +494,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                                   ? 'No active stops out for delivery.'
                                   : _activeTab == 2
                                       ? 'No parcels marked delivered yet.'
-                                      : 'No delivery exceptions recorded.',
+                                      : 'No return/refund parcels recorded.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
                         fontSize: 13,

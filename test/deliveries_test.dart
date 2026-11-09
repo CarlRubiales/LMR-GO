@@ -36,7 +36,7 @@ void main() {
       expect(DeliveryStatus.delivered.legacyBackendStatus, 'Delivered');
 
       expect(DeliveryStatus.deliveryFailed.code, 'DELIVERY_FAILED');
-      expect(DeliveryStatus.deliveryFailed.legacyBackendStatus, 'Failed');
+      expect(DeliveryStatus.deliveryFailed.legacyBackendStatus, 'Return/Refund');
 
       expect(DeliveryStatus.rescheduled.code, 'RESCHEDULED');
       expect(DeliveryStatus.rescheduled.legacyBackendStatus, 'Rescheduled');
@@ -164,25 +164,17 @@ void main() {
       expect(find.text('To Load'), findsOneWidget);
       expect(find.text('Active'), findsOneWidget);
       expect(find.text('Delivered'), findsOneWidget);
-      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('Return/Refund'), findsOneWidget);
 
       // Tap Active tab
       await tester.tap(find.text('Active'));
       await tester.pumpAndSettle();
 
-      // Switch to Route Map view
-      final mapIcon = find.byTooltip('Route map view');
-      expect(mapIcon, findsOneWidget);
-      await tester.tap(mapIcon);
-      await tester.pumpAndSettle();
-
-      expect(find.text('Lumora Hub'), findsOneWidget);
-      expect(find.textContaining('STOPS ROUTED'), findsOneWidget);
-
-      // Switch back to List view
-      final listIcon = find.byTooltip('List view');
-      await tester.tap(listIcon);
-      await tester.pumpAndSettle();
+      // Verify refresh and scan icons are present
+      final refreshIcon = find.byTooltip('Refresh parcels');
+      expect(refreshIcon, findsOneWidget);
+      final scanIcon = find.byTooltip('Scan parcel barcode');
+      expect(scanIcon, findsOneWidget);
     });
 
     testWidgets('HubPickupSheet detects unassigned parcel and warns rider', (tester) async {
@@ -266,6 +258,84 @@ void main() {
       expect(find.text('SMS'), findsOneWidget);
       expect(find.text('Mark Out for Delivery'), findsOneWidget);
       expect(find.text('Message hub about this parcel'), findsOneWidget);
+    });
+
+    testWidgets('StopDetailsSheet shows Delivered and Failed buttons when Out for Delivery', (tester) async {
+      const parcel = DeliveryRequest(
+        id: 'LMR-TEST-OFD',
+        store: 'Shopee Sorting Hub',
+        pickup: 'Bin A-2',
+        dropoff: '123 Rizal Ave, Pila, Laguna',
+        fee: '₱50',
+        distance: '2.1 km',
+        eta: '10 min',
+        recipientName: 'Carl John',
+        recipientPhone: '09170000000',
+        isCod: true,
+        codAmount: 584.05,
+        stopOrder: 2,
+        stage: DeliveryStage.outForDelivery,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: StopDetailsSheet(
+              parcel: parcel,
+              totalStops: 2,
+              onStatusChanged: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // "Delivered" button should be displayed
+      expect(find.text('Delivered'), findsOneWidget);
+      // "Return/Refund" must NOT show during out for delivery
+      expect(find.text('Return/Refund'), findsNothing);
+      expect(find.text('Deliver Parcel'), findsNothing);
+    });
+
+    testWidgets('StopDetailsSheet shows Return/Refund only after parcel is delivered', (tester) async {
+      const parcel = DeliveryRequest(
+        id: 'LMR-TEST-DONE',
+        store: 'Shopee Sorting Hub',
+        pickup: 'Bin A-2',
+        dropoff: '123 Rizal Ave, Pila, Laguna',
+        fee: '₱50',
+        distance: '2.1 km',
+        eta: '10 min',
+        recipientName: 'Carl John',
+        recipientPhone: '09170000000',
+        isCod: true,
+        codAmount: 584.05,
+        stopOrder: 2,
+        stage: DeliveryStage.delivered,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: StopDetailsSheet(
+              parcel: parcel,
+              totalStops: 2,
+              onStatusChanged: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // "Delivery Completed · POD On File" should be visible
+      expect(find.text('Delivery Completed · POD On File'), findsOneWidget);
+      // "Return/Refund" button should now be available for post-delivery claims
+      expect(find.text('Return/Refund'), findsOneWidget);
+      // "Delivered" and "Failed" should not be visible anymore
+      expect(find.text('Delivered'), findsNothing);
+      expect(find.text('Failed'), findsNothing);
     });
 
     testWidgets('ParcelScannerSheet scans assigned barcode and transitions to Picked Up', (tester) async {

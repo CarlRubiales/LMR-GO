@@ -43,15 +43,41 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   bool isSubmitting = false;
   String? registrationError;
 
-  // Hubs
+  // Hubs (All 30 Laguna Municipalities/Cities + Main Hub)
   static const List<Map<String, dynamic>> _fallbackHubs = [
-    {'id': 1, 'name': 'Sta Cruz Hub', 'branch': 'Santa Cruz', 'city': 'Santa Cruz'},
-    {'id': 2, 'name': 'Pila Hub', 'branch': 'Pila', 'city': 'Pila'},
-    {'id': 3, 'name': 'Main Hub', 'branch': 'Main', 'city': 'Main'},
+    {'id': 1, 'name': 'Alaminos Hub', 'branch': 'Alaminos', 'city': 'Alaminos'},
+    {'id': 2, 'name': 'Bay Hub', 'branch': 'Bay', 'city': 'Bay'},
+    {'id': 3, 'name': 'Binan Hub', 'branch': 'Binan', 'city': 'Binan'},
+    {'id': 4, 'name': 'Cabuyao Hub', 'branch': 'Cabuyao', 'city': 'Cabuyao'},
+    {'id': 5, 'name': 'Calamba Hub', 'branch': 'Calamba', 'city': 'Calamba'},
+    {'id': 6, 'name': 'Calauan Hub', 'branch': 'Calauan', 'city': 'Calauan'},
+    {'id': 7, 'name': 'Cavinti Hub', 'branch': 'Cavinti', 'city': 'Cavinti'},
+    {'id': 8, 'name': 'Famy Hub', 'branch': 'Famy', 'city': 'Famy'},
+    {'id': 9, 'name': 'Kalayaan Hub', 'branch': 'Kalayaan', 'city': 'Kalayaan'},
+    {'id': 10, 'name': 'Liliw Hub', 'branch': 'Liliw', 'city': 'Liliw'},
+    {'id': 11, 'name': 'Los Banos Hub', 'branch': 'Los Banos', 'city': 'Los Banos'},
+    {'id': 12, 'name': 'Luisiana Hub', 'branch': 'Luisiana', 'city': 'Luisiana'},
+    {'id': 13, 'name': 'Lumban Hub', 'branch': 'Lumban', 'city': 'Lumban'},
+    {'id': 14, 'name': 'Mabitac Hub', 'branch': 'Mabitac', 'city': 'Mabitac'},
+    {'id': 15, 'name': 'Magdalena Hub', 'branch': 'Magdalena', 'city': 'Magdalena'},
+    {'id': 16, 'name': 'Majayjay Hub', 'branch': 'Majayjay', 'city': 'Majayjay'},
+    {'id': 17, 'name': 'Nagcarlan Hub', 'branch': 'Nagcarlan', 'city': 'Nagcarlan'},
+    {'id': 18, 'name': 'Paete Hub', 'branch': 'Paete', 'city': 'Paete'},
+    {'id': 19, 'name': 'Pagsanjan Hub', 'branch': 'Pagsanjan', 'city': 'Pagsanjan'},
+    {'id': 20, 'name': 'Pakil Hub', 'branch': 'Pakil', 'city': 'Pakil'},
+    {'id': 21, 'name': 'Pangil Hub', 'branch': 'Pangil', 'city': 'Pangil'},
+    {'id': 22, 'name': 'Pila Hub', 'branch': 'Pila', 'city': 'Pila'},
+    {'id': 23, 'name': 'Rizal Hub', 'branch': 'Rizal', 'city': 'Rizal'},
+    {'id': 24, 'name': 'San Pablo Hub', 'branch': 'San Pablo', 'city': 'San Pablo'},
+    {'id': 25, 'name': 'San Pedro Hub', 'branch': 'San Pedro', 'city': 'San Pedro'},
+    {'id': 26, 'name': 'Santa Cruz Hub', 'branch': 'Santa Cruz', 'city': 'Santa Cruz'},
+    {'id': 27, 'name': 'Santa Maria Hub', 'branch': 'Santa Maria', 'city': 'Santa Maria'},
+    {'id': 28, 'name': 'Santa Rosa Hub', 'branch': 'Santa Rosa', 'city': 'Santa Rosa'},
+    {'id': 29, 'name': 'Siniloan Hub', 'branch': 'Siniloan', 'city': 'Siniloan'},
+    {'id': 30, 'name': 'Victoria Hub', 'branch': 'Victoria', 'city': 'Victoria'},
   ];
   List<Map<String, dynamic>> _hubs = List.from(_fallbackHubs);
   int? _selectedHubId;
-  bool _hubsLoading = false;
 
   String vehicle = 'Motorcycle';
   String sex = 'Select sex';
@@ -81,8 +107,67 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   @override
   void initState() {
     super.initState();
+    streetController.addListener(_autoSelectHubFromAddress);
     _fetchHubs();
     _loadProvinces();
+  }
+
+  String _normalizePlace(String raw) {
+    var s = raw.toLowerCase().trim();
+    s = s
+        .replaceAll('ñ', 'n')
+        .replaceAll(RegExp(r'\b(city of|municipality of|city|municipality|province of|laguna|brgy\.?|barangay)\b'), ' ')
+        .replaceAll('sta.', 'santa')
+        .replaceAll('sta ', 'santa ')
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return s;
+  }
+
+  void _autoSelectHubFromAddress() {
+    final cityText = _normalizePlace(_selectedCity?.name ?? '');
+    final brgyText = _normalizePlace(_selectedBarangay?.name ?? '');
+    final streetText = _normalizePlace(streetController.text);
+    final combined = '$cityText $brgyText $streetText'.trim();
+
+    if (combined.isEmpty) return;
+
+    int? matchedId;
+
+    // 1. Direct match on selected Municipality / City
+    if (cityText.isNotEmpty) {
+      final compactCity = cityText.replaceAll(' ', '');
+      for (final hub in _hubs) {
+        final branch = _normalizePlace((hub['branch'] ?? hub['city'] ?? hub['name'] ?? '').toString().replaceAll(RegExp(r'\bhub\b', caseSensitive: false), ''));
+        final compactBranch = branch.replaceAll(' ', '');
+        if (branch.isNotEmpty &&
+            (cityText == branch ||
+                compactCity == compactBranch ||
+                cityText.contains(branch) ||
+                branch.contains(cityText))) {
+          matchedId = hub['id'] as int?;
+          break;
+        }
+      }
+    }
+
+    // 2. Fallback: match hub/municipality name inside barangay or street address text (e.g. "Brgy. Aplaya, Pila, Laguna")
+    if (matchedId == null) {
+      for (final hub in _hubs) {
+        final branch = _normalizePlace((hub['branch'] ?? hub['city'] ?? hub['name'] ?? '').toString().replaceAll(RegExp(r'\bhub\b', caseSensitive: false), ''));
+        if (branch.isNotEmpty && RegExp('\\b${RegExp.escape(branch)}\\b').hasMatch(combined)) {
+          matchedId = hub['id'] as int?;
+          break;
+        }
+      }
+    }
+
+    if (matchedId != null && matchedId != _selectedHubId && mounted) {
+      setState(() {
+        _selectedHubId = matchedId;
+      });
+    }
   }
 
   Future<void> _loadProvinces() async {
@@ -93,17 +178,36 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     try {
       final list = await PsgcService.instance.getProvinces();
       if (mounted) {
+        final laguna = list.cast<PsgcLocation?>().firstWhere(
+              (p) => p != null && p.name.toLowerCase().contains('laguna'),
+              orElse: () => const PsgcLocation(
+                code: '043400000',
+                name: 'Laguna',
+                type: 'province',
+              ),
+            );
         setState(() {
-          _provinces = list;
+          _provinces = laguna != null ? [laguna] : list;
           _loadingProvinces = false;
         });
+        if (laguna != null && _selectedProvince == null) {
+          await _onProvinceSelected(laguna);
+        }
       }
     } catch (e) {
       if (mounted) {
+        const laguna = PsgcLocation(
+          code: '043400000',
+          name: 'Laguna',
+          type: 'province',
+        );
         setState(() {
-          _provinceError = 'Could not load provinces. Tap to retry.';
+          _provinces = [laguna];
           _loadingProvinces = false;
         });
+        if (_selectedProvince == null) {
+          await _onProvinceSelected(laguna);
+        }
       }
     }
   }
@@ -150,6 +254,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       _loadingBarangays = true;
       if (registrationError != null) registrationError = null;
     });
+    _autoSelectHubFromAddress();
 
     try {
       final list = await PsgcService.instance.getBarangays(city);
@@ -174,6 +279,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       _selectedBarangay = brgy;
       if (registrationError != null) registrationError = null;
     });
+    _autoSelectHubFromAddress();
   }
 
   Future<void> _fetchHubs() async {
@@ -184,6 +290,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         setState(() {
           _hubs = hubs;
         });
+        _autoSelectHubFromAddress();
       }
     } catch (_) {
       // Retains _fallbackHubs so all hubs are always available
@@ -445,14 +552,22 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   Future<void> _promptOtpAndRegister(
     BuildContext context,
     String fullName,
-    String email,
-  ) async {
+    String email, {
+    String? initialOtp,
+    bool initialMailSent = true,
+  }) async {
     final otpController = TextEditingController();
     bool isVerifying = false;
     bool isResending = false;
     String? otpError;
+    String? serverOtp = initialOtp;
+    bool mailSent = initialMailSent;
     int cooldown = 60;
     Timer? timer;
+
+    if (!mailSent && serverOtp != null && serverOtp.length == 6) {
+      otpController.text = serverOtp;
+    }
 
     await showModalBottomSheet<void>(
       context: context,
@@ -735,13 +850,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     otpError = null;
                                   });
                                   try {
-                                    await ApiService.instance.sendOtp(
+                                    final res = await ApiService.instance.sendOtp(
                                       email,
                                       name: fullName,
                                     );
                                     setModalState(() {
                                       isResending = false;
                                       cooldown = 60;
+                                      serverOtp = res['otp_code']?.toString();
+                                      mailSent = res['mail_sent'] != false;
+                                      if (!mailSent && serverOtp != null && serverOtp!.length == 6) {
+                                        otpController.text = serverOtp!;
+                                      }
                                     });
                                   } catch (e) {
                                     setModalState(() {
@@ -968,27 +1088,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             ),
             const SizedBox(height: 14),
             SearchableAddressPicker(
-              label: 'Province / Administrative Area *',
-              hint: 'Search & select province',
-              selectedLocation: _selectedProvince,
-              items: _provinces,
-              isLoading: _loadingProvinces,
-              errorMessage: _provinceError,
-              onRetry: _loadProvinces,
-              onSelected: _onProvinceSelected,
-            ),
-            SearchableAddressPicker(
-              label: 'Municipality / City *',
-              hint: _selectedProvince == null
-                  ? 'Select province first'
-                  : 'Search & select municipality or city',
+              label: 'Municipality / City (Laguna) *',
+              hint: 'Search & select municipality or city',
               selectedLocation: _selectedCity,
               items: _cities,
-              isEnabled: _selectedProvince != null,
-              disabledReason: 'Please select a Province / Administrative Area first.',
-              isLoading: _loadingCities,
-              errorMessage: _cityError,
-              onRetry: () => _selectedProvince != null ? _onProvinceSelected(_selectedProvince!) : null,
+              isEnabled: true,
+              disabledReason: 'Loading Laguna municipalities...',
+              isLoading: _loadingCities || _loadingProvinces,
+              errorMessage: _cityError ?? _provinceError,
+              onRetry: () => _selectedProvince != null ? _onProvinceSelected(_selectedProvince!) : _loadProvinces(),
               onSelected: _onCitySelected,
             ),
             SearchableAddressPicker(
@@ -1021,26 +1129,49 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // Hub selection
+            // Hub selection (auto-matched from selected Municipality / Barangay / Address)
             Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Assign to Hub *',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.plum,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        'Assign to Hub *',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.plum,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (_selectedHubId != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Text(
+                            'Auto-matched to address',
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF16A34A),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 7),
                   DropdownButtonFormField<int>(
-                    value: _selectedHubId,
+                    key: ValueKey<int?>(_selectedHubId),
+                    initialValue: _hubs.any((h) => h['id'] == _selectedHubId) ? _selectedHubId : null,
                     isExpanded: true,
                     hint: Text(
-                      'Select hub',
+                      'Automatically assigned from your address',
                       style: GoogleFonts.inter(fontSize: 14, color: AppColors.muted),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1057,7 +1188,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       ),
                     )).toList(),
                     onChanged: (val) => setState(() => _selectedHubId = val),
-                    validator: (val) => val == null ? 'Please select a hub' : null,
+                    validator: (val) => val == null ? 'Please select your address or choose a hub' : null,
                   ),
                 ],
               ),
@@ -1117,12 +1248,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                     ? null
                     : () async {
                         if (key.currentState?.validate() ?? false) {
-                          if (_selectedProvince == null) {
-                            setState(() {
-                              registrationError = 'Please search and select your Province / Administrative Area.';
-                            });
-                            return;
-                          }
+                          _selectedProvince ??= const PsgcLocation(
+                            code: '043400000',
+                            name: 'Laguna',
+                            type: 'province',
+                          );
                           if (_selectedCity == null) {
                             setState(() {
                               registrationError = 'Please search and select your Municipality / City.';
@@ -1146,7 +1276,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
                           try {
                             // 1. Request 6-digit OTP code sent to Gmail
-                            await ApiService.instance.sendOtp(
+                            final otpRes = await ApiService.instance.sendOtp(
                               email,
                               name: fullName,
                             );
@@ -1161,6 +1291,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               context,
                               fullName,
                               email,
+                              initialOtp: otpRes['otp_code']?.toString(),
+                              initialMailSent: otpRes['mail_sent'] != false,
                             );
                           } catch (e) {
                             if (mounted) {

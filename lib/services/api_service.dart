@@ -30,16 +30,13 @@ class ApiService {
       return list.toSet().toList();
     }
     list.addAll([
-      'http://127.0.0.1:8000/api/v1',     // Fast USB adb reverse (works 100% when plugged into PC)
-      'http://192.168.137.1/api/v1',      // Laptop Mobile Hotspot Apache port 80 proxy
-      'http://192.168.137.1:8000/api/v1', // Laptop Mobile Hotspot direct Laravel port 8000
-      'http://192.168.86.42/api/v1',      // Current Wi-Fi Apache port 80 proxy
-      'http://192.168.86.42:8000/api/v1', // Current Wi-Fi direct Laravel port 8000 ← ACTIVE
-      'http://172.20.10.4/api/v1',        // Old Wi-Fi / Hotspot Apache port 80 proxy
-      'http://172.20.10.4:8000/api/v1',   // Old Wi-Fi / Hotspot Laravel port 8000
-      'http://192.168.86.23/api/v1',      // Apache port 80 proxy (old Home Wi-Fi)
-      'http://192.168.86.23:8000/api/v1', // Wi-Fi LAN IP direct Laravel port 8000
-      'http://10.0.2.2:8000/api/v1',      // Android Emulator loopback
+      'http://192.168.86.68/api/v1',          // Wi-Fi Apache port 80 proxy (Firewall approved)
+      'http://192.168.86.68:8000/api/v1',     // Wi-Fi direct Laravel port 8000
+      'https://logistics.lumora.party/api/v1', // Live Laravel Cloud Logistics Production
+      'http://192.168.137.1/api/v1',          // Laptop Mobile Hotspot Apache port 80 proxy
+      'http://192.168.137.1:8000/api/v1',     // Laptop Mobile Hotspot direct Laravel port 8000
+      'http://127.0.0.1:8000/api/v1',         // Fast USB adb reverse (works 100% when plugged into PC)
+      'http://10.0.2.2:8000/api/v1',          // Android Emulator loopback
     ]);
     return list.toSet().toList();
   }
@@ -48,7 +45,7 @@ class ApiService {
     if (kIsWeb) return 'http://127.0.0.1:8000/api/v1';
     try {
       if (Platform.isAndroid) {
-        return 'http://192.168.86.42:8000/api/v1';
+        return 'http://192.168.86.68/api/v1';
       }
     } catch (_) {}
     return 'http://127.0.0.1:8000/api/v1';
@@ -106,16 +103,22 @@ class ApiService {
   Future<http.Response> _get(String path, {Duration timeout = const Duration(seconds: 5)}) async {
     final candidates = [_workingBaseUrl, ...candidateBaseUrls].whereType<String>().toSet().toList();
     Exception? lastException;
+    http.Response? lastResponse;
 
     for (final base in candidates) {
       try {
         final res = await http.get(Uri.parse('$base$path'), headers: _headers).timeout(timeout);
+        if (res.statusCode == 401 || res.statusCode >= 500) {
+          lastResponse = res;
+          continue;
+        }
         _workingBaseUrl = base;
         return res;
       } on Exception catch (e) {
         lastException = e;
       }
     }
+    if (lastResponse != null) return lastResponse;
     throw lastException ?? Exception('Cannot connect to server at $baseUrl');
   }
 
@@ -123,6 +126,7 @@ class ApiService {
   Future<http.Response> _post(String path, {dynamic body, Duration timeout = const Duration(seconds: 5)}) async {
     final candidates = [_workingBaseUrl, ...candidateBaseUrls].whereType<String>().toSet().toList();
     Exception? lastException;
+    http.Response? lastResponse;
 
     for (final base in candidates) {
       try {
@@ -133,12 +137,17 @@ class ApiService {
               body: body != null ? jsonEncode(body) : null,
             )
             .timeout(timeout);
+        if (res.statusCode == 401 || res.statusCode >= 500) {
+          lastResponse = res;
+          continue;
+        }
         _workingBaseUrl = base;
         return res;
       } on Exception catch (e) {
         lastException = e;
       }
     }
+    if (lastResponse != null) return lastResponse;
     throw lastException ?? Exception('Cannot connect to server at $baseUrl');
   }
 
@@ -164,15 +173,16 @@ class ApiService {
     }
   }
 
-  /// Login with email and password against Laravel API
+  /// Login with email and password against Laravel API.
+  /// Throws an Exception if credentials are invalid or if the rider account is not yet approved by Logistics.
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await _post(
       '/rider/login',
-      body: {'email': email, 'password': password},
-      timeout: const Duration(seconds: 6),
+      body: {'email': email.trim(), 'password': password},
+      timeout: const Duration(seconds: 10),
     );
 
-    final data = jsonDecode(response.body);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       _token = data['token'] as String?;
@@ -184,9 +194,9 @@ class ApiService {
         await sp.setString(_keyUser, jsonEncode(_currentUser));
       }
 
-      return data as Map<String, dynamic>;
+      return data;
     } else {
-      final msg = data['message'] ?? 'Login failed (${response.statusCode})';
+      final msg = data['message']?.toString() ?? 'Login failed. Please verify your credentials and approval status.';
       throw Exception(msg);
     }
   }
@@ -243,6 +253,10 @@ class ApiService {
     String? orCrPhoto,
     String? otp,
     int? hubId,
+    String? province,
+    String? municipality,
+    String? barangay,
+    String? street,
   }) async {
     final response = await _post(
       '/rider/register',
@@ -257,6 +271,10 @@ class ApiService {
         'or_cr_photo': ?orCrPhoto,
         'otp': ?otp,
         if (hubId != null) 'hub_id': hubId,
+        'province': ?province,
+        'municipality': ?municipality,
+        'barangay': ?barangay,
+        'street': ?street,
       },
       timeout: const Duration(seconds: 15),
     );
@@ -328,11 +346,12 @@ class ApiService {
     return online;
   }
 
-  /// Get deliveries assigned to this rider
-  Future<List<DeliveryRequest>?> getAssignedDeliveries() async {
+  /// Get deliveries assigned to this rider for a specific date (defaults to today)
+  Future<List<DeliveryRequest>?> getAssignedDeliveries({String? date}) async {
     if (!isAuthenticated) return null;
     try {
-      final res = await _get('/rider/deliveries');
+      final query = date != null && date.trim().isNotEmpty ? '?date=${date.trim()}' : '';
+      final res = await _get('/rider/deliveries$query');
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         final list = (data['data'] as List<dynamic>?) ?? [];
@@ -393,15 +412,80 @@ class ApiService {
   Future<bool> syncStatusPayload(DeliveryStatusPayload payload) async {
     try {
       final cleanId = Uri.encodeComponent(payload.parcelId.replaceAll('#', ''));
+      final hasMedia = (payload.proofPhotoBase64 != null && payload.proofPhotoBase64!.isNotEmpty) ||
+          (payload.proofVideoBase64 != null && payload.proofVideoBase64!.isNotEmpty);
       final res = await _post(
         '/rider/deliveries/$cleanId/status',
         body: payload.toJson(),
-        timeout: const Duration(seconds: 5),
+        timeout: Duration(seconds: hasMedia ? 25 : 6),
       );
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Submit end-of-day COD remittance to hub cashier (Two-step flow: status -> awaiting_cashier)
+  Future<Map<String, dynamic>?> submitRemittance({
+    required double declaredAmount,
+    String? date,
+    List<String>? parcelIds,
+    String? note,
+    String? idempotencyKey,
+  }) async {
+    if (!isAuthenticated) return null;
+    try {
+      final res = await _post(
+        '/rider/remit/submit',
+        body: {
+          'declared_amount': declaredAmount,
+          if (date != null) 'date': date,
+          if (parcelIds != null) 'parcel_ids': parcelIds,
+          if (note != null) 'rider_note': note,
+          if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+        },
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Get status of COD remittance for a specific date
+  Future<Map<String, dynamic>?> getRemittanceStatus({String? date}) async {
+    if (!isAuthenticated) return null;
+    try {
+      final query = date != null ? '?date=$date' : '';
+      final res = await _get('/rider/remit/status$query');
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Remit collected COD cash to hub cashier for a date (legacy endpoint)
+  Future<Map<String, dynamic>?> remitCodCash({
+    required double amount,
+    String? date,
+    String? note,
+  }) async {
+    if (!isAuthenticated) return null;
+    try {
+      final res = await _post(
+        '/rider/remit-cod',
+        body: {
+          'amount': amount,
+          if (date != null) 'date': date,
+          if (note != null) 'note': note,
+        },
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Get earnings summary and history
@@ -437,6 +521,24 @@ class ApiService {
     };
   }
 
+  /// Fetch live real-time messages between rider and logistics hub
+  Future<List<Map<String, dynamic>>> fetchMessages({String? parcelId}) async {
+    if (!isAuthenticated) return [];
+    try {
+      final endpoint = parcelId != null ? '/rider/messages?parcel_id=$parcelId' : '/rider/messages';
+      final res = await _get(endpoint, timeout: const Duration(seconds: 4));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final data = jsonDecode(res.body);
+        if (data is Map<String, dynamic> && data['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (data['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)),
+          );
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
   /// Send a two-way message between rider and logistics hub staff
   Future<Map<String, dynamic>> sendHubMessage({
     required String message,
@@ -446,13 +548,14 @@ class ApiService {
     final payload = <String, dynamic>{
       'riderId': riderId,
       'message': message,
-      'parcelId': ?parcelId,
+      'text': message,
+      ...?parcelId != null ? {'parcel_id': parcelId} : null,
       'timestamp': DateTime.now().toIso8601String(),
     };
 
     try {
       final res = await _post(
-        '/rider/chat/messages',
+        '/rider/messages',
         body: payload,
         timeout: const Duration(seconds: 4),
       );

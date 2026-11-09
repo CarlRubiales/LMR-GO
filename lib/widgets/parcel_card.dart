@@ -47,8 +47,8 @@ class ParcelCard extends StatelessWidget {
       DeliveryStage.failed => (
           AppColors.failedSoft,
           AppColors.failed,
-          'FAILED',
-          Icons.cancel_outlined,
+          'RETURN/REFUND',
+          Icons.assignment_return_outlined,
         ),
       DeliveryStage.rescheduled => (
           AppColors.failedSoft,

@@ -62,6 +62,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        errorMessage = 'Please enter both your email address and password.';
+      });
+      return;
+    }
+
     setState(() {
       isLoading = true;
       errorMessage = null;
@@ -70,26 +77,16 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await ApiService.instance.login(email, password);
       if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
         widget.onLogin();
       }
     } catch (e) {
       if (mounted) {
-        final msg = e.toString().replaceFirst('Exception: ', '');
-        final isTimeout = msg.toLowerCase().contains('timeout') ||
-            msg.toLowerCase().contains('future not completed');
-        final isConnectionError = isTimeout ||
-            msg.toLowerCase().contains('socket') ||
-            msg.toLowerCase().contains('cannot connect') ||
-            msg.toLowerCase().contains('connection');
-
         setState(() {
-          if (isConnectionError) {
-            errorMessage =
-                'Connection timed out. Ensure your phone and laptop are on the same Wi-Fi network.';
-          } else {
-            errorMessage = msg;
-          }
           isLoading = false;
+          errorMessage = e.toString().replaceFirst('Exception: ', '');
         });
       }
     }
@@ -161,9 +158,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     },
                   ),
                   ActionChip(
-                    label: const Text('Home / 192.168.86.42', style: TextStyle(fontSize: 11)),
+                    label: const Text('Wi-Fi / 192.168.86.68', style: TextStyle(fontSize: 11)),
                     onPressed: () {
-                      serverController.text = 'http://192.168.86.42:8000/api/v1';
+                      serverController.text = 'http://192.168.86.68/api/v1';
+                    },
+                  ),
+                  ActionChip(
+                    label: const Text('Wi-Fi :8000 / 192.168.86.68', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      serverController.text = 'http://192.168.86.68:8000/api/v1';
                     },
                   ),
                   ActionChip(
@@ -336,38 +339,6 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 22),
 
-            if (errorMessage != null) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: AppColors.errorBoxBg,
-                  borderRadius: BorderRadius.circular(9),
-                  border: Border.all(color: AppColors.errorBoxBorder),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      size: 18,
-                      color: AppColors.errorBoxText,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        errorMessage!,
-                        style: GoogleFonts.inter(
-                          color: AppColors.errorBoxText,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-            ],
-
             // Email address label: 13 px, semi-bold, plum
             Text(
               'Email address',
@@ -524,6 +495,11 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
             const SizedBox(height: 18),
+
+            if (errorMessage != null) ...[
+              LumoraErrorBox(message: errorMessage!),
+              const SizedBox(height: 14),
+            ],
 
             // Sign in button: full width, height 50, 9 px radius, 1px rose border, cream background, plum bold text, no elevation (pressed state: white)
             SizedBox(
