@@ -254,6 +254,12 @@ class DeliveryRequest {
         : (json['parcel_number']?.toString() ?? json['id']?.toString() ?? '');
 
     final rawMeta = json['metadata'] is Map ? Map<String, dynamic>.from(json['metadata']) : <String, dynamic>{};
+    if (json['assigned_rider_name'] != null) {
+      rawMeta['assigned_rider_name'] = json['assigned_rider_name'];
+    }
+    if (json['assigned_rider_id'] != null) {
+      rawMeta['assigned_rider_id'] = json['assigned_rider_id'];
+    }
     final bool isReturnVal = json['is_return_refund'] == true ||
         rawMeta['is_return_refund'] == true ||
         json['return_status'] != null ||
@@ -277,6 +283,12 @@ class DeliveryRequest {
 
     final returnStatusVal = json['return_status']?.toString() ??
         rawMeta['return_status']?.toString();
+
+    if (returnStatusVal == 'returned_to_hub') {
+      stage = DeliveryStage.returnedToHub;
+    } else if (returnStatusVal == 'in_rider_hands' && stage != DeliveryStage.returnedToHub) {
+      stage = DeliveryStage.returningToHub;
+    }
 
     final returnItemsVal = json['return_items'] is List
         ? (json['return_items'] as List)

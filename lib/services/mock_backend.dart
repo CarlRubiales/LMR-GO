@@ -322,6 +322,8 @@ class MockBackend {
   ];
 
   final List<DeliveryRequest> _runtimeParcels = <DeliveryRequest>[];
+  final Set<String> _returnedToHubIds = <String>{};
+  final Set<String> _inRiderHandsIds = <String>{};
   late final ValueNotifier<List<DeliveryRequest>> parcelsNotifier =
       ValueNotifier<List<DeliveryRequest>>(const <DeliveryRequest>[]);
 
@@ -349,6 +351,8 @@ class MockBackend {
     stopAutoSync();
     selectedDateNotifier.value = DateTime.now();
     _runtimeParcels.clear();
+    _returnedToHubIds.clear();
+    _inRiderHandsIds.clear();
     _parcelsByDate.clear();
     _codRemittedDates.clear();
     _remittedCodAmounts.clear();
@@ -397,24 +401,61 @@ class MockBackend {
         if (apiDeliveries != null) {
           final updatedList = <DeliveryRequest>[];
           final existingLocal = _parcelsByDate[key] ?? <DeliveryRequest>[];
+          final currentRiderName = (ApiService.instance.currentUser?['name'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
 
           for (int i = 0; i < apiDeliveries.length; i++) {
             final item = apiDeliveries[i];
+
+            // Exclude parcels already returned to hub
+            if (item.stage == DeliveryStage.returnedToHub ||
+                item.returnStatus == 'returned_to_hub' ||
+                _returnedToHubIds.contains(item.id) ||
+                (item.barcode != null && _returnedToHubIds.contains(item.barcode)) ||
+                (item.trackingNumber != null && _returnedToHubIds.contains(item.trackingNumber))) {
+              continue;
+            }
+
+            // Strict per-rider ownership filter
+            if (currentRiderName.isNotEmpty) {
+              final assignedName = (item.metadata?['assigned_rider_name'] ??
+                      item.metadata?['delivering_rider_name'] ??
+                      '')
+                  .toString()
+                  .trim()
+                  .toLowerCase();
+              if (assignedName.isNotEmpty && assignedName != currentRiderName) {
+                continue;
+              }
+            }
+
+            final isLocalInHands = _inRiderHandsIds.contains(item.id) ||
+                (item.barcode != null && _inRiderHandsIds.contains(item.barcode)) ||
+                (item.trackingNumber != null && _inRiderHandsIds.contains(item.trackingNumber));
+
             final localIdx = existingLocal.indexWhere((p) =>
                 p.id == item.id ||
                 p.barcode == item.barcode ||
                 p.trackingNumber == item.trackingNumber);
             if (localIdx != -1) {
               final local = existingLocal[localIdx];
+              final effectiveStage = isLocalInHands
+                  ? DeliveryStage.returningToHub
+                  : item.stage;
+              final effectiveReturnStatus = isLocalInHands
+                  ? 'in_rider_hands'
+                  : (item.returnStatus ?? local.returnStatus);
               updatedList.add(item.copyWith(
-                stage: item.stage,
+                stage: effectiveStage,
                 isCodRemitted: item.isCodRemitted || local.isCodRemitted,
                 failureReason: item.failureReason ?? local.failureReason,
                 failureNotes: item.failureNotes ?? local.failureNotes,
                 returnReason: item.returnReason ?? local.returnReason,
                 returnDetails: item.returnDetails ?? local.returnDetails,
                 sellerNote: item.sellerNote ?? local.sellerNote,
-                returnStatus: item.returnStatus ?? local.returnStatus,
+                returnStatus: effectiveReturnStatus,
                 returnItems: item.returnItems ?? local.returnItems,
                 returnEvidence: item.returnEvidence ?? local.returnEvidence,
                 isReturnRefund: item.isReturnRefund || local.isReturnRefund,
@@ -428,6 +469,8 @@ class MockBackend {
               ));
             } else {
               updatedList.add(item.copyWith(
+                stage: isLocalInHands ? DeliveryStage.returningToHub : item.stage,
+                returnStatus: isLocalInHands ? 'in_rider_hands' : item.returnStatus,
                 stopOrder: item.stopOrder > 0 ? item.stopOrder : i + 1,
               ));
             }
@@ -479,24 +522,57 @@ class MockBackend {
         p.trackingNumber == parcelId ||
         p.id == '#$parcelId' ||
         parcelId == '#${p.id}');
+    if (newStage == DeliveryStage.returnedToHub) {
+      _returnedToHubIds.add(parcelId);
+      _inRiderHandsIds.remove(parcelId);
+    } else if (newStage == DeliveryStage.returningToHub) {
+      _inRiderHandsIds.add(parcelId);
+    }
+
     if (idx != -1) {
       final existing = currentList[idx];
-      final updated = existing.copyWith(
-        stage: newStage,
-        failureReason: failureReason ?? existing.failureReason,
-        failureNotes: failureNotes ?? existing.failureNotes,
-        returnReason: failureReason ?? existing.returnReason,
-        returnDetails: failureNotes ?? existing.returnDetails,
-        isReturnRefund: newStage == DeliveryStage.returnedToHub || existing.isReturnRefund,
-        podPhotoPath: podPhotoPath ?? existing.podPhotoPath,
-        podVideoPath: podVideoPath ?? existing.podVideoPath,
-        podSignature: podSignature ?? existing.podSignature,
-        podOtp: podOtp ?? existing.podOtp,
-        deliveredAt: (newStage == DeliveryStage.delivered || newStage == DeliveryStage.completed)
-            ? DateTime.now()
-            : existing.deliveredAt,
-      );
-      currentList[idx] = updated;
+      if (newStage == DeliveryStage.returnedToHub) {
+        _returnedToHubIds.add(existing.id);
+        if (existing.barcode != null && existing.barcode!.isNotEmpty) {
+          _returnedToHubIds.add(existing.barcode!);
+        }
+        if (existing.trackingNumber != null && existing.trackingNumber!.isNotEmpty) {
+          _returnedToHubIds.add(existing.trackingNumber!);
+        }
+        _inRiderHandsIds.remove(existing.id);
+        if (existing.barcode != null) _inRiderHandsIds.remove(existing.barcode!);
+        if (existing.trackingNumber != null) _inRiderHandsIds.remove(existing.trackingNumber!);
+        currentList.removeAt(idx);
+      } else {
+        if (newStage == DeliveryStage.returningToHub) {
+          _inRiderHandsIds.add(existing.id);
+          if (existing.barcode != null && existing.barcode!.isNotEmpty) {
+            _inRiderHandsIds.add(existing.barcode!);
+          }
+          if (existing.trackingNumber != null && existing.trackingNumber!.isNotEmpty) {
+            _inRiderHandsIds.add(existing.trackingNumber!);
+          }
+        }
+        final updated = existing.copyWith(
+          stage: newStage,
+          failureReason: failureReason ?? existing.failureReason,
+          failureNotes: failureNotes ?? existing.failureNotes,
+          returnReason: failureReason ?? existing.returnReason,
+          returnDetails: failureNotes ?? existing.returnDetails,
+          returnStatus: newStage == DeliveryStage.returningToHub
+              ? 'in_rider_hands'
+              : existing.returnStatus,
+          isReturnRefund: newStage == DeliveryStage.returningToHub || existing.isReturnRefund,
+          podPhotoPath: podPhotoPath ?? existing.podPhotoPath,
+          podVideoPath: podVideoPath ?? existing.podVideoPath,
+          podSignature: podSignature ?? existing.podSignature,
+          podOtp: podOtp ?? existing.podOtp,
+          deliveredAt: (newStage == DeliveryStage.delivered || newStage == DeliveryStage.completed)
+              ? DateTime.now()
+              : existing.deliveredAt,
+        );
+        currentList[idx] = updated;
+      }
       _parcelsByDate[key] = currentList;
       _runtimeParcels.clear();
       _runtimeParcels.addAll(currentList);
