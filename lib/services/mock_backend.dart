@@ -353,7 +353,9 @@ class MockBackend {
     _codRemittedDates.clear();
     _remittedCodAmounts.clear();
     _remittedCodTimestamps.clear();
-    _initDateParcels();
+    _remittanceStatuses.clear();
+    _remittanceDifferences.clear();
+    _remittanceCashiers.clear();
     parcelsNotifier.value = const <DeliveryRequest>[];
   }
 
@@ -616,10 +618,11 @@ class MockBackend {
       try {
         final data = await ApiService.instance.getEarnings();
         final history = data['history'] as List<Map<String, String>>?;
-        if (history != null && history.isNotEmpty) {
+        if (history != null) {
           return history;
         }
       } catch (_) {}
+      return const [];
     }
     return _defaultHistory;
   }

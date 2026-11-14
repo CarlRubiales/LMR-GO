@@ -126,15 +126,14 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
   }
 
   void _syncAccount() {
+    account = RiderAccount();
     final user = ApiService.instance.currentUser;
     if (user != null) {
       final name = (user['name'] as String? ?? '').trim();
       final parts = name.split(' ');
       if (parts.isNotEmpty) {
         account.profile['First name'] = parts.first;
-        if (parts.length > 1) {
-          account.profile['Last name'] = parts.sublist(1).join(' ');
-        }
+        account.profile['Last name'] = parts.length > 1 ? parts.sublist(1).join(' ') : '';
       }
       account.profile['Email'] = user['email'] as String? ?? '';
       if (user['phone'] != null) {
@@ -247,6 +246,7 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
       return LoginScreen(
         onBack: signedOut ? null : () => setState(() => login = false),
         onLogin: () {
+          MockBackend().reset();
           setState(() {
             _syncAccount();
             login = false;

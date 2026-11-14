@@ -152,13 +152,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _openHubPickup() {
-    final toLoad = _parcels.where((p) => p.stage == DeliveryStage.accepted).toList();
+    final toLoad = _parcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).toList();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => HubPickupSheet(
-        assignedParcels: toLoad.isNotEmpty ? toLoad : _parcels,
+        assignedParcels: toLoad.isNotEmpty ? toLoad : _parcels.where((p) => !p.isReturnRefund).toList(),
         onRunStarted: () {
           _refreshParcels();
           widget.onTab(1); // Jump to Deliveries tab
@@ -181,29 +181,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final assignedCount = _parcels.where((p) => p.stage == DeliveryStage.accepted).length;
-    final pickedUpCount = _parcels.where((p) => p.stage == DeliveryStage.pickedUp).length;
+    final assignedCount = _parcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).length;
+    final pickedUpCount = _parcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).length;
     final outForDeliveryCount = _parcels
-        .where((p) => p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived)
+        .where((p) => (p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived) && !p.isReturnRefund)
         .length;
     final deliveredCount = _parcels
-        .where((p) => p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed)
+        .where((p) => (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund)
         .length;
-    final failedCount = _parcels.where((p) => p.stage == DeliveryStage.failed).length;
-    final rescheduledCount = _parcels.where((p) => p.stage == DeliveryStage.rescheduled).length;
+    final failedCount = _parcels
+        .where((p) =>
+            p.isReturnRefund ||
+            p.stage == DeliveryStage.failed ||
+            p.stage == DeliveryStage.returningToHub ||
+            p.stage == DeliveryStage.returnedToHub)
+        .length;
+    final rescheduledCount = _parcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).length;
 
     // Filtered manifest
     final filtered = switch (_statusFilter) {
-      1 => _parcels.where((p) => p.stage == DeliveryStage.accepted).toList(),
-      2 => _parcels.where((p) => p.stage == DeliveryStage.pickedUp).toList(),
+      1 => _parcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).toList(),
+      2 => _parcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).toList(),
       3 => _parcels
-          .where((p) => p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived)
+          .where((p) => (p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived) && !p.isReturnRefund)
           .toList(),
       4 => _parcels
-          .where((p) => p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed)
+          .where((p) => (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund)
           .toList(),
-      5 => _parcels.where((p) => p.stage == DeliveryStage.failed).toList(),
-      6 => _parcels.where((p) => p.stage == DeliveryStage.rescheduled).toList(),
+      5 => _parcels
+          .where((p) =>
+              p.isReturnRefund ||
+              p.stage == DeliveryStage.failed ||
+              p.stage == DeliveryStage.returningToHub ||
+              p.stage == DeliveryStage.returnedToHub)
+          .toList(),
+      6 => _parcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).toList(),
       _ => _parcels,
     };
 
@@ -817,8 +829,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               (parcel) => ParcelCard(
                 parcel: parcel,
                 onTap: () => _openStopDetails(parcel),
-                actionLabel: parcel.stage == DeliveryStage.accepted ? 'Scan' : null,
-                onAction: parcel.stage == DeliveryStage.accepted
+                actionLabel: (parcel.stage == DeliveryStage.accepted && !parcel.isReturnRefund) ? 'Scan' : null,
+                onAction: (parcel.stage == DeliveryStage.accepted && !parcel.isReturnRefund)
                     ? () => _openBarcodeScanner(target: parcel)
                     : null,
               ),

@@ -97,6 +97,9 @@ class ApiService {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
+        if (_currentUser?['email'] != null) 'X-Rider-Email': _currentUser!['email'].toString(),
+        if (_currentUser?['name'] != null) 'X-Rider-Name': _currentUser!['name'].toString(),
+        if (_currentUser?['id'] != null) 'X-Rider-User-Id': _currentUser!['id'].toString(),
       };
 
   /// Low-level GET request with automatic fallback between Wi-Fi LAN IP and USB reverse
