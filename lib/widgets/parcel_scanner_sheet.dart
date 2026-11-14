@@ -59,7 +59,7 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
         BarcodeFormat.dataMatrix,
         BarcodeFormat.pdf417,
         BarcodeFormat.codabar,
-        BarcodeFormat.itf,
+        BarcodeFormat.itf14,
       ],
     );
 
@@ -307,19 +307,23 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
   @override
   Widget build(BuildContext context) {
     final pickedUpParcels = _manifest.where((p) => p.stage == DeliveryStage.pickedUp).toList();
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
 
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.90,
-      ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF13151B),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          children: [
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.90,
+        ),
+        decoration: const BoxDecoration(
+          color: Color(0xFF13151B),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             // Handle Bar
             Center(
               child: Container(
@@ -814,9 +818,13 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                           icon: const Icon(Icons.navigation_outlined, size: 18),
-                          label: Text(
-                            'Start Out for Delivery (${pickedUpParcels.length} Picked Up)',
-                            style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 13.5),
+                          label: Flexible(
+                            child: Text(
+                              'Start Out for Delivery (${pickedUpParcels.length} Picked Up)',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 13.5),
+                            ),
                           ),
                         ),
                       ),
@@ -849,6 +857,7 @@ class _ParcelScannerSheetState extends State<ParcelScannerSheet>
           ],
         ),
       ),
+    ),
     );
   }
 }
