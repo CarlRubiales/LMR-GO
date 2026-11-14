@@ -97,9 +97,6 @@ class ApiService {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
-        if (_currentUser?['email'] != null) 'X-Rider-Email': _currentUser!['email'].toString(),
-        if (_currentUser?['name'] != null) 'X-Rider-Name': _currentUser!['name'].toString(),
-        if (_currentUser?['id'] != null) 'X-Rider-User-Id': _currentUser!['id'].toString(),
       };
 
   /// Low-level GET request with automatic fallback between Wi-Fi LAN IP and USB reverse
@@ -278,14 +275,14 @@ class ApiService {
         'license_photo': ?licensePhoto,
         'or_cr_photo': ?orCrPhoto,
         'otp': ?otp,
-        if (hubId != null) 'hub_id': hubId,
+        'hub_id': ?hubId,
         'province': ?province,
         'municipality': ?municipality,
         'barangay': ?barangay,
         'street': ?street,
         'birthday': ?birthday,
         'birth_date': ?birthDate,
-        'date_of_birth': ?(dateOfBirth ?? birthday ?? birthDate),
+        'date_of_birth': ?dateOfBirth,
         'age': ?age,
         'sex': ?sex,
       },
@@ -452,10 +449,10 @@ class ApiService {
         '/rider/remit/submit',
         body: {
           'declared_amount': declaredAmount,
-          if (date != null) 'date': date,
-          if (parcelIds != null) 'parcel_ids': parcelIds,
-          if (note != null) 'rider_note': note,
-          if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+          'date': ?date,
+          'parcel_ids': ?parcelIds,
+          'rider_note': ?note,
+          'idempotency_key': ?idempotencyKey,
         },
       );
       if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -490,8 +487,8 @@ class ApiService {
         '/rider/remit-cod',
         body: {
           'amount': amount,
-          if (date != null) 'date': date,
-          if (note != null) 'note': note,
+          'date': ?date,
+          'note': ?note,
         },
       );
       if (res.statusCode >= 200 && res.statusCode < 300) {
