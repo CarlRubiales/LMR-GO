@@ -127,6 +127,44 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
     }
   }
 
+  /// Action when rider confirms return parcel is in his hands (collected from buyer)
+  Future<void> _submitItemInHand() async {
+    setState(() => _submitting = true);
+
+    try {
+      final reason = widget.parcel.effectiveReturnReason;
+      final notes = widget.parcel.effectiveReturnDetails;
+
+      await MockBackend().updateParcelStatus(
+        widget.parcel.id,
+        DeliveryStage.returningToHub,
+        failureReason: reason,
+        failureNotes: notes,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onFailedRecorded();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Item in hand confirmed for ${widget.parcel.id}. Hand in to hub when ready.'),
+            backgroundColor: AppColors.plum,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating status: $e'),
+            backgroundColor: AppColors.failed,
+          ),
+        );
+      }
+    }
+  }
+
   /// Action when rider marks parcel as Returned to Hub
   Future<void> _submitReturnedToHub() async {
     setState(() => _submitting = true);
@@ -424,29 +462,45 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     decoration: BoxDecoration(
-                      color: AppColors.failedSoft,
+                      color: widget.parcel.stage == DeliveryStage.returningToHub
+                          ? AppColors.blush1
+                          : AppColors.failedSoft,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.line),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.assignment_return_outlined, size: 18, color: AppColors.failed),
+                        Icon(
+                          widget.parcel.stage == DeliveryStage.returningToHub
+                              ? Icons.front_hand_outlined
+                              : Icons.assignment_return_outlined,
+                          size: 18,
+                          color: widget.parcel.stage == DeliveryStage.returningToHub
+                              ? AppColors.plum
+                              : AppColors.failed,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Post-Delivery Return / Refund Request',
+                                widget.parcel.stage == DeliveryStage.returningToHub
+                                    ? 'Parcel is in Your Hands · Heading to Hub'
+                                    : 'Return Request · Collect from Buyer',
                                 style: GoogleFonts.inter(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w800,
-                                  color: AppColors.failed,
+                                  color: widget.parcel.stage == DeliveryStage.returningToHub
+                                      ? AppColors.plum
+                                      : AppColors.failed,
                                 ),
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Claim received from Lumora E-Commerce · Approved for Hub return',
+                                widget.parcel.stage == DeliveryStage.returningToHub
+                                    ? 'Item collected from buyer · Confirm when handed in to sorting hub'
+                                    : 'Approved by Seller · Confirm item in hand once collected from buyer',
                                 style: GoogleFonts.inter(fontSize: 11, color: AppColors.ink),
                               ),
                             ],
@@ -1019,7 +1073,7 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
             ),
           ),
 
-          // Submit Footer: "Returned to Hub" for returns, or normal submit for pre-delivery
+          // Submit Footer: "Confirm Item in Hand" or "Returned to Hub"
           Container(
             padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
@@ -1032,10 +1086,16 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
               child: FilledButton.icon(
                 onPressed: _submitting
                     ? null
-                    : (_isReturnClaim ? _submitReturnedToHub : _submitAction),
+                    : (_isReturnClaim
+                        ? (widget.parcel.stage == DeliveryStage.returningToHub
+                            ? _submitReturnedToHub
+                            : _submitItemInHand)
+                        : _submitAction),
                 style: FilledButton.styleFrom(
                   backgroundColor: _isReturnClaim
-                      ? AppColors.plum
+                      ? (widget.parcel.stage == DeliveryStage.returningToHub
+                          ? AppColors.plum
+                          : AppColors.orange)
                       : (_isReschedule ? AppColors.orange : AppColors.failed),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -1047,13 +1107,21 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                       )
                     : Icon(_isReturnClaim
-                        ? Icons.warehouse_outlined
+                        ? (widget.parcel.stage == DeliveryStage.returningToHub
+                            ? Icons.warehouse_outlined
+                            : Icons.front_hand_outlined)
                         : (_isReschedule ? Icons.update : Icons.assignment_return_outlined)),
                 label: Text(
                   _submitting
-                      ? (_isReturnClaim ? 'Returning to Hub...' : 'Submitting Return / Refund...')
+                      ? (_isReturnClaim
+                          ? (widget.parcel.stage == DeliveryStage.returningToHub
+                              ? 'Handing in to Hub...'
+                              : 'Confirming Item in Hand...')
+                          : 'Submitting Return / Refund...')
                       : (_isReturnClaim
-                          ? 'Returned to Hub'
+                          ? (widget.parcel.stage == DeliveryStage.returningToHub
+                              ? 'Returned to Hub'
+                              : 'Confirm Item in Hand')
                           : (_isReschedule ? 'Confirm Reschedule' : 'Submit Return / Refund')),
                   style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 15),
                 ),

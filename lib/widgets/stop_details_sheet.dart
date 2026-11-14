@@ -31,11 +31,82 @@ class StopDetailsSheet extends StatefulWidget {
 
 class _StopDetailsSheetState extends State<StopDetailsSheet> {
   late DeliveryRequest _currentParcel;
+  bool _isUpdating = false;
 
   @override
   void initState() {
     super.initState();
     _currentParcel = widget.parcel;
+  }
+
+  Future<void> _confirmItemInHand() async {
+    setState(() => _isUpdating = true);
+    try {
+      await MockBackend().updateParcelStatus(
+        _currentParcel.id,
+        DeliveryStage.returningToHub,
+        failureReason: _currentParcel.effectiveReturnReason,
+        failureNotes: _currentParcel.effectiveReturnDetails,
+      );
+      setState(() {
+        _currentParcel = _currentParcel.copyWith(
+          stage: DeliveryStage.returningToHub,
+          isReturnRefund: true,
+        );
+        _isUpdating = false;
+      });
+      widget.onStatusChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Item in hand confirmed for ${_currentParcel.id}. Hand in to hub when ready.'),
+            backgroundColor: AppColors.plum,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUpdating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.failed),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmReturnedToHub() async {
+    setState(() => _isUpdating = true);
+    try {
+      await MockBackend().updateParcelStatus(
+        _currentParcel.id,
+        DeliveryStage.returnedToHub,
+        failureReason: _currentParcel.effectiveReturnReason,
+        failureNotes: _currentParcel.effectiveReturnDetails,
+      );
+      setState(() {
+        _currentParcel = _currentParcel.copyWith(
+          stage: DeliveryStage.returnedToHub,
+          isReturnRefund: true,
+        );
+        _isUpdating = false;
+      });
+      widget.onStatusChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Parcel ${_currentParcel.id} handed in to hub. Return intake completed!'),
+            backgroundColor: AppColors.delivered,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUpdating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.failed),
+        );
+      }
+    }
   }
 
   Future<void> _launchMaps() async {
@@ -156,12 +227,12 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
         parcel: _currentParcel,
         isPostDelivery: isPostDelivery,
         onFailedRecorded: () {
+          final refreshed = MockBackend().parcelsNotifier.value.firstWhere(
+            (p) => p.id == _currentParcel.id,
+            orElse: () => _currentParcel,
+          );
           setState(() {
-            _currentParcel = _currentParcel.copyWith(
-              stage: isPostDelivery || _currentParcel.isReturnRefund
-                  ? DeliveryStage.returnedToHub
-                  : DeliveryStage.failed,
-            );
+            _currentParcel = refreshed;
           });
           widget.onStatusChanged();
         },
@@ -570,6 +641,179 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
 
   Widget _buildLifecycleActions() {
     final stage = _currentParcel.stage;
+
+    // Return & Refund Lifecycle Handling (2-Step Confirmation)
+    if (_currentParcel.isReturnRefund) {
+      if (stage == DeliveryStage.returnedToHub) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+          decoration: BoxDecoration(
+            color: AppColors.deliveredSoft,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.delivered),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.check_circle, color: AppColors.delivered, size: 20),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Returned to Hub · Return Intake Recorded',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    color: AppColors.delivered,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      if (stage == DeliveryStage.returningToHub) {
+        // Step 2: Item in rider hands -> Confirm when parcel hands in into the hub!
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: AppColors.blush1,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.front_hand_outlined, size: 16, color: AppColors.plum),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Parcel is in your hands · Hand in to sorting hub',
+                      style: GoogleFonts.inter(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.plum,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: _isUpdating ? null : _confirmReturnedToHub,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.plum,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: _isUpdating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Icon(Icons.warehouse_outlined, size: 20),
+                label: Text(
+                  _isUpdating ? 'Handing in to Hub...' : 'Returned to Hub (Hand In)',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 14.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: () => _openFailed(isPostDelivery: true),
+              icon: const Icon(Icons.receipt_long_outlined, size: 14, color: AppColors.muted),
+              label: Text(
+                'View Buyer Claim & Proof Details',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.muted,
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+
+      // Step 1: Return approved by seller -> Rider confirms parcel is in his hands!
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: AppColors.failedSoft,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.assignment_return_outlined, size: 16, color: AppColors.failed),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Return Approved by Seller · Collect item from buyer',
+                    style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.failed,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: _isUpdating ? null : _confirmItemInHand,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: _isUpdating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                    )
+                  : const Icon(Icons.front_hand_outlined, size: 20),
+              label: Text(
+                _isUpdating ? 'Confirming...' : 'Confirm Item in Hand',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 14.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: () => _openFailed(isPostDelivery: true),
+            icon: const Icon(Icons.info_outline, size: 14, color: AppColors.plum),
+            label: Text(
+              'Inspect Buyer Return Reason & Proof',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.plum,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
     // Stage 1A: Assigned at hub (not yet picked up) -> "Scan Barcode to Pick Up"
     if (stage == DeliveryStage.accepted) {

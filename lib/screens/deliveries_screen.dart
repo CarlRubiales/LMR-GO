@@ -104,24 +104,25 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
     List<DeliveryRequest> base;
     switch (_activeTab) {
       case 0: // To Load
-        base = _allParcels.where((p) => p.stage == DeliveryStage.accepted).toList();
+        base = _allParcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).toList();
         break;
       case 1: // Out for Delivery
         base = _allParcels.where((p) {
-          return p.stage == DeliveryStage.pickedUp ||
+          return (p.stage == DeliveryStage.pickedUp ||
               p.stage == DeliveryStage.outForDelivery ||
-              p.stage == DeliveryStage.arrived;
+              p.stage == DeliveryStage.arrived) && !p.isReturnRefund;
         }).toList();
         break;
       case 2: // Delivered
         base = _allParcels.where((p) {
-          return p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed;
+          return (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund;
         }).toList();
         break;
-      case 3: // Failed / Rescheduled
+      case 3: // Return / Refund
       default:
         base = _allParcels.where((p) {
-          return p.stage == DeliveryStage.failed ||
+          return p.isReturnRefund ||
+              p.stage == DeliveryStage.failed ||
               p.stage == DeliveryStage.rescheduled ||
               p.stage == DeliveryStage.returningToHub ||
               p.stage == DeliveryStage.returnedToHub;
@@ -143,21 +144,22 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
   int _countForTab(int tabIndex) {
     switch (tabIndex) {
       case 0:
-        return _allParcels.where((p) => p.stage == DeliveryStage.accepted).length;
+        return _allParcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).length;
       case 1:
         return _allParcels.where((p) {
-          return p.stage == DeliveryStage.pickedUp ||
+          return (p.stage == DeliveryStage.pickedUp ||
               p.stage == DeliveryStage.outForDelivery ||
-              p.stage == DeliveryStage.arrived;
+              p.stage == DeliveryStage.arrived) && !p.isReturnRefund;
         }).length;
       case 2:
         return _allParcels.where((p) {
-          return p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed;
+          return (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund;
         }).length;
       case 3:
       default:
         return _allParcels.where((p) {
-          return p.stage == DeliveryStage.failed ||
+          return p.isReturnRefund ||
+              p.stage == DeliveryStage.failed ||
               p.stage == DeliveryStage.rescheduled ||
               p.stage == DeliveryStage.returningToHub ||
               p.stage == DeliveryStage.returnedToHub;

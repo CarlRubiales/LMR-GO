@@ -93,6 +93,11 @@ class DeliveryRequest {
       stage == DeliveryStage.failed || stage == DeliveryStage.rescheduled;
   bool get isReturnedToHub => stage == DeliveryStage.returnedToHub;
   bool get isReturningToHub => stage == DeliveryStage.returningToHub;
+  bool get isItemInHand => stage == DeliveryStage.returningToHub;
+  bool get isReturnPendingPickup =>
+      isReturnRefund &&
+      stage != DeliveryStage.returningToHub &&
+      stage != DeliveryStage.returnedToHub;
 
   // Effective reason and details for display
   String get effectiveReturnReason {

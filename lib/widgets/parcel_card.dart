@@ -18,8 +18,33 @@ class ParcelCard extends StatelessWidget {
   final VoidCallback? onAction;
   final String? actionLabel;
 
-  (Color bg, Color text, String label, IconData icon) _statusConfig(DeliveryStage stage) {
-    return switch (stage) {
+  (Color bg, Color text, String label, IconData icon) _statusConfig(DeliveryRequest p) {
+    if (p.isReturnRefund) {
+      if (p.stage == DeliveryStage.returnedToHub) {
+        return (
+          AppColors.deliveredSoft,
+          AppColors.delivered,
+          'RETURNED TO HUB',
+          Icons.warehouse_outlined,
+        );
+      } else if (p.stage == DeliveryStage.returningToHub) {
+        return (
+          AppColors.blush2,
+          AppColors.plum,
+          'ITEM IN HAND · TO HUB',
+          Icons.front_hand_outlined,
+        );
+      } else {
+        return (
+          AppColors.failedSoft,
+          AppColors.failed,
+          'RETURN PICKUP · BUYER',
+          Icons.assignment_return_outlined,
+        );
+      }
+    }
+
+    return switch (p.stage) {
       DeliveryStage.accepted => (
           AppColors.pendingSoft,
           AppColors.pending,
@@ -56,18 +81,24 @@ class ParcelCard extends StatelessWidget {
           'RESCHEDULED',
           Icons.update_outlined,
         ),
-      DeliveryStage.returningToHub || DeliveryStage.returnedToHub => (
+      DeliveryStage.returningToHub => (
           AppColors.blush2,
           AppColors.plum,
           'RETURNING TO HUB',
           Icons.keyboard_return_outlined,
+        ),
+      DeliveryStage.returnedToHub => (
+          AppColors.deliveredSoft,
+          AppColors.delivered,
+          'RETURNED TO HUB',
+          Icons.warehouse_outlined,
         ),
     };
   }
 
   @override
   Widget build(BuildContext context) {
-    final (statusBg, statusText, statusLabelText, statusIcon) = _statusConfig(parcel.stage);
+    final (statusBg, statusText, statusLabelText, statusIcon) = _statusConfig(parcel);
 
     return Card(
       color: AppColors.cream,
