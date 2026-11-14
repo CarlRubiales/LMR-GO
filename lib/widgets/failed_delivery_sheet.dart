@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/delivery_request.dart';
+import '../services/api_service.dart';
 import '../services/mock_backend.dart';
 import '../theme/app_colors.dart';
 
@@ -51,6 +53,25 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
     'Tomorrow · Afternoon (1PM - 5PM)',
     'Next Business Day · Standard Window',
   ];
+
+  bool get _isReturnClaim =>
+      widget.isPostDelivery ||
+      widget.parcel.isReturnRefund ||
+      widget.parcel.isDelivered ||
+      widget.parcel.isReturnedToHub ||
+      widget.parcel.returnReason != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedReason = widget.parcel.returnReason ?? widget.parcel.failureReason;
+    if (_notesController.text.isEmpty) {
+      final initialNotes = widget.parcel.returnDetails ?? widget.parcel.failureNotes;
+      if (initialNotes != null && initialNotes.isNotEmpty) {
+        _notesController.text = initialNotes;
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -106,6 +127,45 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
     }
   }
 
+  /// Action when rider marks parcel as Returned to Hub
+  Future<void> _submitReturnedToHub() async {
+    setState(() => _submitting = true);
+
+    try {
+      final reason = widget.parcel.effectiveReturnReason;
+      final notes = widget.parcel.effectiveReturnDetails;
+
+      await MockBackend().updateParcelStatus(
+        widget.parcel.id,
+        DeliveryStage.returnedToHub,
+        failureReason: reason,
+        failureNotes: notes,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onFailedRecorded();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Parcel ${widget.parcel.id} marked as Returned to Hub'),
+            backgroundColor: AppColors.plum,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating status: $e'),
+            backgroundColor: AppColors.failed,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Action for regular pre-delivery failed delivery
   Future<void> _submitAction() async {
     if (_selectedReason == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -148,6 +208,131 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
         ),
       );
     }
+  }
+
+  String _resolveMediaUrl(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('data:')) {
+      return trimmed;
+    }
+    // Resolve relative paths against backend server origin
+    final base = ApiService.instance.baseUrl.replaceAll(RegExp(r'/api/v1/?$'), '');
+    if (trimmed.startsWith('/')) {
+      return '$base$trimmed';
+    }
+    return '$base/$trimmed';
+  }
+
+  Widget _buildMediaImage(String rawUrl, {BoxFit fit = BoxFit.cover, double? height, double? width}) {
+    final trimmed = rawUrl.trim();
+    if (trimmed.startsWith('data:image/')) {
+      try {
+        final commaIdx = trimmed.indexOf(',');
+        final base64Str = commaIdx != -1 ? trimmed.substring(commaIdx + 1) : trimmed;
+        final bytes = base64Decode(base64Str);
+        return Image.memory(
+          bytes,
+          fit: fit,
+          height: height,
+          width: width,
+          errorBuilder: (_, _, _) => _buildPlaceholder(),
+        );
+      } catch (_) {
+        return _buildPlaceholder();
+      }
+    }
+
+    if (!kIsWeb && !trimmed.startsWith('http') && File(trimmed).existsSync()) {
+      return Image.file(
+        File(trimmed),
+        fit: fit,
+        height: height,
+        width: width,
+        errorBuilder: (_, _, _) => _buildPlaceholder(),
+      );
+    }
+
+    final fullUrl = _resolveMediaUrl(trimmed);
+    return Image.network(
+      fullUrl,
+      fit: fit,
+      height: height,
+      width: width,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          height: height,
+          width: width,
+          color: AppColors.blush1,
+          alignment: Alignment.center,
+          child: const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.plum),
+          ),
+        );
+      },
+      errorBuilder: (_, _, _) => _buildPlaceholder(),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      color: AppColors.blush1,
+      alignment: Alignment.center,
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.image_not_supported_outlined, color: AppColors.muted, size: 28),
+          SizedBox(height: 4),
+          Text(
+            'Evidence preview',
+            style: TextStyle(fontSize: 10, color: AppColors.muted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openLightbox(BuildContext context, String rawUrl) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              panEnabled: true,
+              minScale: 0.8,
+              maxScale: 4.0,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  color: Colors.black87,
+                  child: _buildMediaImage(rawUrl, fit: BoxFit.contain),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                icon: const Icon(Icons.close, color: Colors.white, size: 26),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black54,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _fileBasename(String path) {
@@ -201,7 +386,7 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        (widget.isPostDelivery || widget.parcel.isDelivered)
+                        _isReturnClaim
                             ? 'Return / Refund Request'
                             : 'Report Failed Delivery',
                         style: GoogleFonts.playfairDisplay(
@@ -229,37 +414,216 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
           ),
           const Divider(height: 18, color: AppColors.line),
 
+          // Content body
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               children: [
-                if (widget.isPostDelivery || widget.parcel.isDelivered)
+                if (_isReturnClaim) ...[
+                  // Post-Delivery Banner
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     decoration: BoxDecoration(
                       color: AppColors.failedSoft,
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.line),
                     ),
                     child: Row(
                       children: [
                         const Icon(Icons.assignment_return_outlined, size: 18, color: AppColors.failed),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Expanded(
-                          child: Text(
-                            'Post-Delivery Return / Refund Request',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.failed,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Post-Delivery Return / Refund Request',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.failed,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Claim received from Lumora E-Commerce · Approved for Hub return',
+                                style: GoogleFonts.inter(fontSize: 11, color: AppColors.ink),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  )
-                else
-                  // Action Toggle: Return/Refund vs Reschedule
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 1. Reason from E-Commerce Storefront
+                  Text(
+                    '1. BUYER RETURN / REFUND REASON',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: AppColors.failedSoft,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.line),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.report_problem_outlined, size: 14, color: AppColors.failed),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    widget.parcel.effectiveReturnReason,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.failed,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Buyer Explanation:',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.blush1,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.line),
+                          ),
+                          child: Text(
+                            widget.parcel.effectiveReturnDetails,
+                            style: GoogleFonts.inter(
+                              fontSize: 12.5,
+                              color: AppColors.ink,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        if (widget.parcel.sellerNote != null &&
+                            widget.parcel.sellerNote!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Icon(Icons.storefront_outlined, size: 14, color: AppColors.plum),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Seller Approval Note: ${widget.parcel.sellerNote}',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.plum,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // 2. Buyer Return Items (if available)
+                  if (widget.parcel.returnItems != null && widget.parcel.returnItems!.isNotEmpty) ...[
+                    Text(
+                      '2. RETURN ITEMS',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.plum,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.line),
+                      ),
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        children: widget.parcel.returnItems!.map((item) {
+                          final name = item is Map ? (item['name'] ?? 'Item') : item.toString();
+                          final qty = item is Map ? (item['quantity'] ?? 1) : 1;
+                          final price = item is Map ? item['price'] : null;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.inventory_2_outlined, size: 16, color: AppColors.plum),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '$name (x$qty)',
+                                    style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.ink),
+                                  ),
+                                ),
+                                if (price != null)
+                                  Text(
+                                    '₱${double.tryParse(price.toString())?.toStringAsFixed(2) ?? price}',
+                                    style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.plum),
+                                  ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // 3. Buyer Proof (Photo and Video Evidence)
+                  Text(
+                    '2. PROOF OF THE BUYER (EVIDENCE)',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildBuyerEvidenceCard(context),
+                  const SizedBox(height: 20),
+                ] else ...[
+                  // Normal Failed Delivery Reporting View (pre-delivery failure)
                   Container(
                     decoration: BoxDecoration(
                       color: AppColors.blush1,
@@ -314,55 +678,90 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                       ],
                     ),
                   ),
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-                // 1. Reason Selection
-                Text(
-                  '1. SELECT RETURN / REFUND REASON *',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.plum,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 8),
-
-                ..._reasons.map((reason) {
-                  final isSelected = _selectedReason == reason;
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 7),
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.blush1 : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: isSelected ? AppColors.plum : AppColors.line,
-                        width: isSelected ? 1.5 : 1,
-                      ),
+                  Text(
+                    '1. SELECT RETURN / REFUND REASON *',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
                     ),
-                    child: RadioListTile<String>(
-                      value: reason,
-                      groupValue: _selectedReason,
-                      activeColor: AppColors.plum,
-                      dense: true,
-                      title: Text(
-                        reason,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: AppColors.ink,
+                  ),
+                  const SizedBox(height: 8),
+
+                  ..._reasons.map((reason) {
+                    final isSelected = _selectedReason == reason;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 7),
+                      decoration: BoxDecoration(
+                        color: isSelected ? AppColors.blush1 : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected ? AppColors.plum : AppColors.line,
+                          width: isSelected ? 1.5 : 1,
                         ),
                       ),
-                      onChanged: (val) => setState(() => _selectedReason = val),
-                    ),
-                  );
-                }),
+                      child: RadioListTile<String>(
+                        value: reason,
+                        groupValue: _selectedReason,
+                        activeColor: AppColors.plum,
+                        dense: true,
+                        title: Text(
+                          reason,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        onChanged: (val) => setState(() => _selectedReason = val),
+                      ),
+                    );
+                  }),
 
-                // Reschedule Time Window Selection (if Reschedule tab selected)
-                if (_isReschedule) ...[
-                  const SizedBox(height: 10),
+                  if (_isReschedule) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'SELECT NEW DELIVERY WINDOW',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.plum,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.line),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedWindow,
+                          isExpanded: true,
+                          items: _rescheduleWindows.map((w) {
+                            return DropdownMenuItem<String>(
+                              value: w,
+                              child: Text(w, style: GoogleFonts.inter(fontSize: 13)),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) setState(() => _selectedWindow = val);
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 14),
+
                   Text(
-                    'SELECT NEW DELIVERY WINDOW',
+                    '2. ATTACH PICTURE (PHOTO EVIDENCE)',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -372,294 +771,255 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                   ),
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.line),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedWindow,
-                        isExpanded: true,
-                        items: _rescheduleWindows.map((w) {
-                          return DropdownMenuItem<String>(
-                            value: w,
-                            child: Text(w, style: GoogleFonts.inter(fontSize: 13)),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => _selectedWindow = val);
-                        },
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _photoPath != null ? AppColors.delivered : AppColors.line,
+                        width: _photoPath != null ? 1.5 : 1,
                       ),
                     ),
-                  ),
-                ],
-
-                const SizedBox(height: 14),
-
-                // 2. Picture (Photo) Evidence
-                Text(
-                  '2. ATTACH PICTURE (PHOTO EVIDENCE)',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.plum,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: _photoPath != null ? AppColors.delivered : AppColors.line,
-                      width: _photoPath != null ? 1.5 : 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_photoPath != null) ...[
-                        if (!kIsWeb && File(_photoPath!).existsSync())
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.file(
-                              File(_photoPath!),
-                              height: 150,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Icon(Icons.check_circle, color: AppColors.delivered, size: 18),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                'Picture attached: ${_fileBasename(_photoPath!)}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.inter(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.delivered,
-                                ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_photoPath != null) ...[
+                          if (!kIsWeb && File(_photoPath!).existsSync())
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.file(
+                                File(_photoPath!),
+                                height: 150,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
                               ),
                             ),
-                            TextButton.icon(
-                              onPressed: () => setState(() => _photoPath = null),
-                              icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.failed),
-                              label: Text(
-                                'Remove',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.failed,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ] else ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => _pickPhoto(ImageSource.camera),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.plum,
-                                  side: const BorderSide(color: AppColors.plum),
-                                  padding: const EdgeInsets.symmetric(vertical: 11),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                                label: Text(
-                                  'Take Picture',
-                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => _pickPhoto(ImageSource.gallery),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.plum,
-                                  side: const BorderSide(color: AppColors.line),
-                                  padding: const EdgeInsets.symmetric(vertical: 11),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                icon: const Icon(Icons.photo_library_outlined, size: 18),
-                                label: Text(
-                                  'From Gallery',
-                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                // 3. Video Evidence
-                Text(
-                  '3. ATTACH VIDEO (VIDEO EVIDENCE)',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.plum,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: _videoPath != null ? AppColors.delivered : AppColors.line,
-                      width: _videoPath != null ? 1.5 : 1,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_videoPath != null) ...[
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppColors.deliveredSoft,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
+                          const SizedBox(height: 8),
+                          Row(
                             children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(Icons.videocam, color: AppColors.delivered, size: 22),
-                              ),
-                              const SizedBox(width: 10),
+                              const Icon(Icons.check_circle, color: AppColors.delivered, size: 18),
+                              const SizedBox(width: 6),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Video Clip Attached',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w800,
-                                        color: AppColors.delivered,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _fileBasename(_videoPath!),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 11,
-                                        color: AppColors.ink,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  'Picture attached: ${_fileBasename(_photoPath!)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.delivered,
+                                  ),
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Remove video',
-                                onPressed: () => setState(() => _videoPath = null),
-                                icon: const Icon(Icons.delete_outline, color: AppColors.failed, size: 20),
+                              TextButton.icon(
+                                onPressed: () => setState(() => _photoPath = null),
+                                icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.failed),
+                                label: Text(
+                                  'Remove',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.failed,
+                                  ),
+                                ),
                               ),
                             ],
                           ),
-                        ),
-                      ] else ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => _pickVideo(ImageSource.camera),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.plum,
-                                  side: const BorderSide(color: AppColors.plum),
-                                  padding: const EdgeInsets.symmetric(vertical: 11),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                icon: const Icon(Icons.videocam_outlined, size: 18),
-                                label: Text(
-                                  'Record Video',
-                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => _pickVideo(ImageSource.gallery),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.plum,
-                                  side: const BorderSide(color: AppColors.line),
-                                  padding: const EdgeInsets.symmetric(vertical: 11),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                icon: const Icon(Icons.video_library_outlined, size: 18),
-                                label: Text(
-                                  'From Gallery',
-                                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                        ] else ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _pickPhoto(ImageSource.camera),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.plum,
+                                    side: const BorderSide(color: AppColors.plum),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                                  label: Text(
+                                    'Take Picture',
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _pickPhoto(ImageSource.gallery),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.plum,
+                                    side: const BorderSide(color: AppColors.line),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                                  label: Text(
+                                    'From Gallery',
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 14),
-
-                // 4. Additional Reason Details / Notes
-                Text(
-                  '4. ADDITIONAL REASON DETAILS / NOTES',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.plum,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _notesController,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    hintText: 'Explain the return/refund reason or parcel condition...',
-                    hintStyle: GoogleFonts.inter(fontSize: 12, color: AppColors.muted),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.line),
                     ),
                   ),
-                ),
-                const SizedBox(height: 20),
+
+                  const SizedBox(height: 14),
+
+                  Text(
+                    '3. ATTACH VIDEO (VIDEO EVIDENCE)',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _videoPath != null ? AppColors.delivered : AppColors.line,
+                        width: _videoPath != null ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_videoPath != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppColors.deliveredSoft,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.videocam, color: AppColors.delivered, size: 22),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Video Clip Attached',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: AppColors.delivered,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _fileBasename(_videoPath!),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 11,
+                                          color: AppColors.ink,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove video',
+                                  onPressed: () => setState(() => _videoPath = null),
+                                  icon: const Icon(Icons.delete_outline, color: AppColors.failed, size: 20),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ] else ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _pickVideo(ImageSource.camera),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.plum,
+                                    side: const BorderSide(color: AppColors.plum),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  icon: const Icon(Icons.videocam_outlined, size: 18),
+                                  label: Text(
+                                    'Record Video',
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _pickVideo(ImageSource.gallery),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.plum,
+                                    side: const BorderSide(color: AppColors.line),
+                                    padding: const EdgeInsets.symmetric(vertical: 11),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  icon: const Icon(Icons.video_library_outlined, size: 18),
+                                  label: Text(
+                                    'From Gallery',
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Text(
+                    '4. ADDITIONAL REASON DETAILS / NOTES',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.plum,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _notesController,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      hintText: 'Explain the return/refund reason or parcel condition...',
+                      hintStyle: GoogleFonts.inter(fontSize: 12, color: AppColors.muted),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
               ],
             ),
           ),
 
-          // Submit Footer
+          // Submit Footer: "Returned to Hub" for returns, or normal submit for pre-delivery
           Container(
             padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
@@ -670,9 +1030,13 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
               width: double.infinity,
               height: 52,
               child: FilledButton.icon(
-                onPressed: _submitting ? null : _submitAction,
+                onPressed: _submitting
+                    ? null
+                    : (_isReturnClaim ? _submitReturnedToHub : _submitAction),
                 style: FilledButton.styleFrom(
-                  backgroundColor: _isReschedule ? AppColors.orange : AppColors.failed,
+                  backgroundColor: _isReturnClaim
+                      ? AppColors.plum
+                      : (_isReschedule ? AppColors.orange : AppColors.failed),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
@@ -682,14 +1046,168 @@ class _FailedDeliverySheetState extends State<FailedDeliverySheet> {
                         height: 18,
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                       )
-                    : Icon(_isReschedule ? Icons.update : Icons.assignment_return_outlined),
+                    : Icon(_isReturnClaim
+                        ? Icons.warehouse_outlined
+                        : (_isReschedule ? Icons.update : Icons.assignment_return_outlined)),
                 label: Text(
                   _submitting
-                      ? 'Submitting Return / Refund...'
-                      : (_isReschedule ? 'Confirm Reschedule' : 'Submit Return / Refund'),
+                      ? (_isReturnClaim ? 'Returning to Hub...' : 'Submitting Return / Refund...')
+                      : (_isReturnClaim
+                          ? 'Returned to Hub'
+                          : (_isReschedule ? 'Confirm Reschedule' : 'Submit Return / Refund')),
                   style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 15),
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBuyerEvidenceCard(BuildContext context) {
+    final evidenceUrls = widget.parcel.resolvedReturnEvidenceUrls;
+
+    if (evidenceUrls.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.photo_library_outlined, size: 36, color: AppColors.muted),
+            const SizedBox(height: 8),
+            Text(
+              'No buyer photo/video attached',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: AppColors.plum,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'The buyer did not upload photos or video with this return claim.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 11.5, color: AppColors.muted),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.photo_camera_outlined, size: 16, color: AppColors.plum),
+              const SizedBox(width: 6),
+              Text(
+                'Buyer Evidence (${evidenceUrls.length} file${evidenceUrls.length > 1 ? 's' : ''})',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.plum,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Tap to expand',
+                style: GoogleFonts.inter(fontSize: 11, color: AppColors.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 140,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: evidenceUrls.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (ctx, idx) {
+                final raw = evidenceUrls[idx];
+                final isVideo = raw.toLowerCase().endsWith('.mp4') ||
+                    raw.toLowerCase().endsWith('.mov') ||
+                    raw.toLowerCase().contains('video');
+
+                return GestureDetector(
+                  onTap: () => _openLightbox(context, raw),
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 140,
+                          height: 140,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: AppColors.line),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: _buildMediaImage(raw, fit: BoxFit.cover),
+                        ),
+                      ),
+                      if (isVideo)
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black38,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.center,
+                            child: const CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.white,
+                              child: Icon(Icons.play_arrow, color: AppColors.plum, size: 24),
+                            ),
+                          ),
+                        ),
+                      Positioned(
+                        bottom: 6,
+                        right: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isVideo ? Icons.videocam : Icons.zoom_in,
+                                color: Colors.white,
+                                size: 12,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                isVideo ? 'VID' : 'IMG',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ],

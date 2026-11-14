@@ -157,7 +157,11 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
         isPostDelivery: isPostDelivery,
         onFailedRecorded: () {
           setState(() {
-            _currentParcel = _currentParcel.copyWith(stage: DeliveryStage.failed);
+            _currentParcel = _currentParcel.copyWith(
+              stage: isPostDelivery || _currentParcel.isReturnRefund
+                  ? DeliveryStage.returnedToHub
+                  : DeliveryStage.failed,
+            );
           });
           widget.onStatusChanged();
         },
@@ -728,7 +732,42 @@ class _StopDetailsSheetState extends State<StopDetailsSheet> {
       );
     }
 
-    // Stage 4: Failed / Rescheduled / Return/Refund recorded
+    // Stage 4: Returned to Hub
+    if (stage == DeliveryStage.returnedToHub) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: AppColors.blush1,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.warehouse_outlined,
+              color: AppColors.plum,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Returned to Hub · Return Intake Recorded',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  color: AppColors.plum,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Stage 5: Failed / Rescheduled / Return/Refund recorded
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),

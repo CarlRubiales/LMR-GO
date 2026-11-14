@@ -27,6 +27,14 @@ class DeliveryRequest {
     this.assignedAt,
     this.scannedAt,
     this.deliveredAt,
+    this.isReturnRefund = false,
+    this.returnReason,
+    this.returnDetails,
+    this.sellerNote,
+    this.returnStatus,
+    this.returnItems,
+    this.returnEvidence,
+    this.metadata,
   });
 
   final String id;
@@ -56,6 +64,14 @@ class DeliveryRequest {
   final DateTime? assignedAt;
   final DateTime? scannedAt;
   final DateTime? deliveredAt;
+  final bool isReturnRefund;
+  final String? returnReason;
+  final String? returnDetails;
+  final String? sellerNote;
+  final String? returnStatus;
+  final List<dynamic>? returnItems;
+  final List<dynamic>? returnEvidence;
+  final Map<String, dynamic>? metadata;
 
   // Parcel delivery aliases and helpers
   String get parcelId => id;
@@ -75,6 +91,52 @@ class DeliveryRequest {
       stage == DeliveryStage.delivered || stage == DeliveryStage.completed;
   bool get isFailed =>
       stage == DeliveryStage.failed || stage == DeliveryStage.rescheduled;
+  bool get isReturnedToHub => stage == DeliveryStage.returnedToHub;
+  bool get isReturningToHub => stage == DeliveryStage.returningToHub;
+
+  // Effective reason and details for display
+  String get effectiveReturnReason {
+    if (returnReason != null && returnReason!.trim().isNotEmpty) {
+      return returnReason!.trim();
+    }
+    if (failureReason != null && failureReason!.trim().isNotEmpty) {
+      return failureReason!.trim();
+    }
+    return 'Return / Refund Request';
+  }
+
+  String get effectiveReturnDetails {
+    if (returnDetails != null && returnDetails!.trim().isNotEmpty) {
+      return returnDetails!.trim();
+    }
+    if (failureNotes != null && failureNotes!.trim().isNotEmpty) {
+      return failureNotes!.trim();
+    }
+    return 'Buyer requested return / refund for this order.';
+  }
+
+  List<String> get resolvedReturnEvidenceUrls {
+    final list = <String>[];
+    if (returnEvidence != null) {
+      for (final item in returnEvidence!) {
+        if (item is String && item.trim().isNotEmpty) {
+          list.add(item.trim());
+        } else if (item is Map) {
+          final url = item['url']?.toString() ?? item['path']?.toString() ?? item['src']?.toString();
+          if (url != null && url.trim().isNotEmpty) {
+            list.add(url.trim());
+          }
+        }
+      }
+    }
+    if (podPhotoPath != null && podPhotoPath!.trim().isNotEmpty && !list.contains(podPhotoPath!.trim())) {
+      list.add(podPhotoPath!.trim());
+    }
+    if (podVideoPath != null && podVideoPath!.trim().isNotEmpty && !list.contains(podVideoPath!.trim())) {
+      list.add(podVideoPath!.trim());
+    }
+    return list;
+  }
 
   DeliveryRequest copyWith({
     String? id,
@@ -104,6 +166,14 @@ class DeliveryRequest {
     DateTime? assignedAt,
     DateTime? scannedAt,
     DateTime? deliveredAt,
+    bool? isReturnRefund,
+    String? returnReason,
+    String? returnDetails,
+    String? sellerNote,
+    String? returnStatus,
+    List<dynamic>? returnItems,
+    List<dynamic>? returnEvidence,
+    Map<String, dynamic>? metadata,
   }) {
     return DeliveryRequest(
       id: id ?? this.id,
@@ -133,6 +203,14 @@ class DeliveryRequest {
       assignedAt: assignedAt ?? this.assignedAt,
       scannedAt: scannedAt ?? this.scannedAt,
       deliveredAt: deliveredAt ?? this.deliveredAt,
+      isReturnRefund: isReturnRefund ?? this.isReturnRefund,
+      returnReason: returnReason ?? this.returnReason,
+      returnDetails: returnDetails ?? this.returnDetails,
+      sellerNote: sellerNote ?? this.sellerNote,
+      returnStatus: returnStatus ?? this.returnStatus,
+      returnItems: returnItems ?? this.returnItems,
+      returnEvidence: returnEvidence ?? this.returnEvidence,
+      metadata: metadata ?? this.metadata,
     );
   }
 
@@ -170,6 +248,39 @@ class DeliveryRequest {
         ? rawBarcode.trim()
         : (json['parcel_number']?.toString() ?? json['id']?.toString() ?? '');
 
+    final rawMeta = json['metadata'] is Map ? Map<String, dynamic>.from(json['metadata']) : <String, dynamic>{};
+    final bool isReturnVal = json['is_return_refund'] == true ||
+        rawMeta['is_return_refund'] == true ||
+        json['return_status'] != null ||
+        rawMeta['return_status'] != null ||
+        stageStr == 'returned' ||
+        stageStr == 'returned_to_hub' ||
+        stageStr == 'return_refund';
+
+    final returnReasonVal = json['return_reason']?.toString() ??
+        rawMeta['return_reason']?.toString() ??
+        json['failure_reason']?.toString() ??
+        rawMeta['failure_reason']?.toString();
+
+    final returnDetailsVal = json['return_details']?.toString() ??
+        rawMeta['return_details']?.toString() ??
+        json['failure_notes']?.toString() ??
+        rawMeta['failure_notes']?.toString();
+
+    final sellerNoteVal = json['seller_note']?.toString() ??
+        rawMeta['seller_note']?.toString();
+
+    final returnStatusVal = json['return_status']?.toString() ??
+        rawMeta['return_status']?.toString();
+
+    final returnItemsVal = json['return_items'] is List
+        ? (json['return_items'] as List)
+        : (rawMeta['return_items'] is List ? (rawMeta['return_items'] as List) : null);
+
+    final returnEvidenceVal = json['return_evidence'] is List
+        ? (json['return_evidence'] as List)
+        : (rawMeta['return_evidence'] is List ? (rawMeta['return_evidence'] as List) : null);
+
     return DeliveryRequest(
       id: json['id']?.toString() ?? json['parcel_number']?.toString() ?? '',
       store: json['store']?.toString() ?? 'Central Hub',
@@ -198,6 +309,14 @@ class DeliveryRequest {
       podVideoPath: json['pod_video_path']?.toString() ?? json['return_video_url']?.toString(),
       podSignature: json['pod_signature']?.toString(),
       podOtp: json['pod_otp']?.toString(),
+      isReturnRefund: isReturnVal,
+      returnReason: returnReasonVal,
+      returnDetails: returnDetailsVal,
+      sellerNote: sellerNoteVal,
+      returnStatus: returnStatusVal,
+      returnItems: returnItemsVal,
+      returnEvidence: returnEvidenceVal,
+      metadata: rawMeta,
     );
   }
 
@@ -226,6 +345,14 @@ class DeliveryRequest {
         'pod_video_path': podVideoPath,
         'pod_signature': podSignature,
         'pod_otp': podOtp,
+        'is_return_refund': isReturnRefund,
+        'return_reason': returnReason,
+        'return_details': returnDetails,
+        'seller_note': sellerNote,
+        'return_status': returnStatus,
+        'return_items': returnItems,
+        'return_evidence': returnEvidence,
+        'metadata': metadata,
       };
 }
 
