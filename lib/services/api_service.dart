@@ -531,18 +531,44 @@ class ApiService {
     };
   }
 
+  Map<String, dynamic>? _hubChatInfo;
+  int _unreadHubMessages = 0;
+
+  Map<String, dynamic>? get hubChatInfo => _hubChatInfo;
+  int get unreadHubMessages => _unreadHubMessages;
+
   /// Fetch live real-time messages between rider and logistics hub
-  Future<List<Map<String, dynamic>>> fetchMessages({String? parcelId}) async {
+  Future<List<Map<String, dynamic>>> fetchMessages({
+    String? parcelId,
+    bool markRead = true,
+  }) async {
     if (!isAuthenticated) return [];
     try {
-      final endpoint = parcelId != null ? '/rider/messages?parcel_id=$parcelId' : '/rider/messages';
+      final params = <String, String>{
+        'mark_read': markRead ? '1' : '0',
+        if (parcelId != null && parcelId.isNotEmpty) 'parcel_id': parcelId,
+      };
+      final queryString = params.entries
+          .map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}')
+          .join('&');
+      final endpoint = '/rider/messages?$queryString';
       final res = await _get(endpoint, timeout: const Duration(seconds: 4));
       if (res.statusCode >= 200 && res.statusCode < 300) {
         final data = jsonDecode(res.body);
-        if (data is Map<String, dynamic> && data['data'] is List) {
-          return List<Map<String, dynamic>>.from(
-            (data['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)),
-          );
+        if (data is Map<String, dynamic>) {
+          if (data['hub'] is Map) {
+            _hubChatInfo = Map<String, dynamic>.from(data['hub'] as Map);
+          }
+          if (data['unread_count'] != null) {
+            _unreadHubMessages = int.tryParse(data['unread_count'].toString()) ?? 0;
+          } else if (markRead) {
+            _unreadHubMessages = 0;
+          }
+          if (data['data'] is List) {
+            return List<Map<String, dynamic>>.from(
+              (data['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)),
+            );
+          }
         }
       }
     } catch (_) {}
@@ -571,7 +597,12 @@ class ApiService {
       );
       if (res.statusCode >= 200 && res.statusCode < 300) {
         final data = jsonDecode(res.body);
-        if (data is Map<String, dynamic>) return data;
+        if (data is Map<String, dynamic>) {
+          if (data['hub'] is Map) {
+            _hubChatInfo = Map<String, dynamic>.from(data['hub'] as Map);
+          }
+          return data;
+        }
       }
     } catch (_) {}
 

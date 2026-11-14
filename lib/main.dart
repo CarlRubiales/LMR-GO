@@ -161,27 +161,60 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _syncHubChatPreview() async {
+    if (!ApiService.instance.isAuthenticated) return;
+    try {
+      final list = await ApiService.instance.fetchMessages(markRead: false);
+      if (!mounted) return;
+      final hubConv = conversations.firstWhere(
+        (c) => c.isHubStaff,
+        orElse: () => conversations.first,
+      );
+      final hubInfo = ApiService.instance.hubChatInfo;
+      setState(() {
+        if (hubInfo != null) {
+          final hubTitle = hubInfo['hub_title']?.toString() ?? '';
+          final adminName = hubInfo['admin_name']?.toString() ?? '';
+          final adminEmail = hubInfo['admin_email']?.toString() ?? '';
+          if (hubTitle.isNotEmpty) hubConv.name = hubTitle;
+          if (adminName.isNotEmpty) {
+            hubConv.description = adminEmail.isNotEmpty
+                ? '$adminName · $adminEmail'
+                : adminName;
+          }
+        }
+        hubConv.unread = ApiService.instance.unreadHubMessages;
+        hubConv.messages
+          ..clear()
+          ..addAll(
+            list.map((m) {
+              final timeStr = m['created_at']?.toString();
+              final time = timeStr != null
+                  ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now())
+                  : DateTime.now();
+              return PreviewMessage(
+                id: m['id'] as int? ?? 0,
+                text: (m['message'] ?? m['text'] ?? '').toString(),
+                isMine: m['is_mine'] == true,
+                isRead: m['is_read'] == true,
+                time: time,
+                parcelId: m['parcel_number']?.toString() ?? m['parcel_id']?.toString(),
+                senderName: (m['sender_name'] ?? '').toString(),
+              );
+            }),
+          );
+      });
+    } catch (_) {}
+  }
+
   Future<void> support() async {
-    final conversation = conversations.firstWhere(
-      (c) => c.description == 'Rider support',
-    );
-    conversation.unread = 0;
-    await Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) => ConversationScreen(conversation: conversation),
-      ),
-    );
-    if (mounted) setState(() {});
+    await openHubChat();
   }
 
   Future<void> openHubChat([String? parcelId]) async {
     final hubConversation = conversations.firstWhere(
       (c) => c.isHubStaff,
-      orElse: () => conversations.firstWhere(
-        (c) => c.description == 'Rider support',
-        orElse: () => conversations.first,
-      ),
+      orElse: () => conversations.first,
     );
     hubConversation.unread = 0;
     await Navigator.push(
@@ -193,7 +226,10 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (mounted) setState(() {});
+    if (mounted) {
+      _syncHubChatPreview();
+      setState(() {});
+    }
   }
 
   void accept(DeliveryRequest request) {
@@ -249,12 +285,14 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
           MockBackend().reset();
           setState(() {
             _syncAccount();
+            conversations = createPreviewConversations();
             login = false;
             signedOut = false;
             tab = 0;
           });
           MockBackend().getTodayRunParcels();
           MockBackend().startAutoSync();
+          _syncHubChatPreview();
         },
         onRegister: () {
           setState(() {

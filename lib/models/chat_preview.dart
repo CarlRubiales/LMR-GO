@@ -11,6 +11,7 @@ class PreviewMessage {
     this.parcelId,
     this.id,
     this.senderName,
+    this.isRead = false,
   });
 
   String text;
@@ -20,6 +21,7 @@ class PreviewMessage {
   final String? parcelId;
   final int? id;
   final String? senderName;
+  bool isRead;
   bool edited = false;
   bool unsent = false;
 }
@@ -34,99 +36,33 @@ class PreviewConversation {
     this.isHubStaff = false,
   });
 
-  final String name;
-  final String description;
+  String name;
+  String description;
   final IconData icon;
   final List<PreviewMessage> messages;
   int unread;
   final bool isHubStaff;
 
   String get preview {
-    if (messages.isEmpty) return 'Start a conversation';
+    if (messages.isEmpty) return 'Tap to message your Branch Sorting Hub';
     final last = messages.last;
     if (last.unsent) return 'Message unsent';
     return '${last.isMine ? 'You: ' : ''}${last.text}';
   }
 
   DateTime get updatedAt =>
-      messages.isEmpty ? DateTime(2000) : messages.last.time;
+      messages.isEmpty ? DateTime.now() : messages.last.time;
 }
 
 List<PreviewConversation> createPreviewConversations() {
-  final now = DateTime.now();
-  final morning = now.subtract(const Duration(minutes: 5));
   return [
     PreviewConversation(
-      name: 'Lumora Sorting Center · Hub Staff',
-      description: 'Lumora Sorting Hub · Dispatch & Staff',
+      name: 'Branch Sorting Hub · Operations & Dispatch',
+      description: 'Direct two-way channel with your assigned Hub',
       icon: Icons.warehouse_rounded,
       isHubStaff: true,
       unread: 0,
-      messages: [
-        PreviewMessage(
-          text:
-              'Rider Dispatch: 5 assigned parcels for Route MNL-4 have been scanned into Bin Bay A-04. Please scan each parcel at the hub to verify before departure.',
-          isMine: false,
-          time: morning.subtract(const Duration(minutes: 20)),
-        ),
-        PreviewMessage(
-          text: 'Understood. Heading to Bay A-04 now.',
-          isMine: true,
-          time: morning.subtract(const Duration(minutes: 15)),
-        ),
-        PreviewMessage(
-          text:
-              'Notice: Road closure reported near Boni Ave. Please follow alternate route on Shaw Blvd.',
-          isMine: false,
-          time: morning,
-        ),
-      ],
-    ),
-    PreviewConversation(
-      name: 'Mango Tree Grocer',
-      description: 'Store',
-      icon: Icons.storefront_rounded,
-      unread: 2,
-      messages: [
-        PreviewMessage(
-          text: 'Hi! I’m your LMR GO courier for order RG-1842.',
-          isMine: true,
-          time: morning.subtract(const Duration(minutes: 8)),
-        ),
-        PreviewMessage(
-          text: 'Hi there! We’re getting the last few items ready.',
-          isMine: false,
-          time: morning.subtract(const Duration(minutes: 6)),
-        ),
-        PreviewMessage(
-          text: 'Great, I’ll meet you at the pickup counter.',
-          isMine: true,
-          time: morning.subtract(const Duration(minutes: 4)),
-        ),
-        PreviewMessage(
-          text: 'Order is packed and ready for pickup.',
-          isMine: false,
-          time: morning,
-        ),
-        PreviewMessage(
-          text: 'Please ask for Mia when you arrive. Thank you!',
-          isMine: false,
-          time: morning.add(const Duration(minutes: 1)),
-        ),
-      ],
-    ),
-    PreviewConversation(
-      name: 'LMR GO Support',
-      description: 'Rider support',
-      icon: Icons.support_agent_rounded,
-      messages: [
-        PreviewMessage(
-          text:
-              'Welcome to LMR GO support. How can we help with your delivery?',
-          isMine: false,
-          time: now.subtract(const Duration(days: 1)),
-        ),
-      ],
+      messages: [],
     ),
   ];
 }

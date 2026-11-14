@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -27,12 +28,18 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.conversations ?? fallbackConversations;
   final search = TextEditingController();
   bool unreadOnly = false;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     if (ApiService.instance.isAuthenticated) {
       _loadLiveHubPreview();
+      _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (mounted && ApiService.instance.isAuthenticated) {
+          _loadLiveHubPreview();
+        }
+      });
     }
     if (widget.initialParcelId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -48,33 +55,55 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadLiveHubPreview() async {
     try {
-      final list = await ApiService.instance.fetchMessages();
-      if (!mounted || list.isEmpty) return;
-      final hubConv = conversations.firstWhere((c) => c.isHubStaff, orElse: () => conversations.first);
-      final last = list.last;
-      final text = (last['message'] ?? last['text'] ?? '').toString();
-      final isMine = last['is_mine'] == true;
-      final timeStr = last['created_at']?.toString();
-      final time = timeStr != null ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now()) : DateTime.now();
+      final list = await ApiService.instance.fetchMessages(markRead: false);
+      if (!mounted) return;
+      final hubConv = conversations.firstWhere(
+        (c) => c.isHubStaff,
+        orElse: () => conversations.first,
+      );
+      final hubInfo = ApiService.instance.hubChatInfo;
 
       setState(() {
-        if (hubConv.messages.isNotEmpty && hubConv.messages.last.text == text) return;
-        hubConv.messages.add(
-          PreviewMessage(
-            id: last['id'] as int? ?? 0,
-            text: text,
-            isMine: isMine,
-            time: time,
-            parcelId: last['parcel_id']?.toString() ?? last['parcel_number']?.toString(),
-            senderName: (last['sender_name'] ?? '').toString(),
-          ),
-        );
+        if (hubInfo != null) {
+          final hubTitle = hubInfo['hub_title']?.toString() ?? '';
+          final adminName = hubInfo['admin_name']?.toString() ?? '';
+          final adminEmail = hubInfo['admin_email']?.toString() ?? '';
+          if (hubTitle.isNotEmpty) {
+            hubConv.name = hubTitle;
+          }
+          if (adminName.isNotEmpty) {
+            hubConv.description = adminEmail.isNotEmpty
+                ? '$adminName · $adminEmail'
+                : adminName;
+          }
+        }
+        hubConv.unread = ApiService.instance.unreadHubMessages;
+        hubConv.messages
+          ..clear()
+          ..addAll(
+            list.map((m) {
+              final timeStr = m['created_at']?.toString();
+              final time = timeStr != null
+                  ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now())
+                  : DateTime.now();
+              return PreviewMessage(
+                id: m['id'] as int? ?? 0,
+                text: (m['message'] ?? m['text'] ?? '').toString(),
+                isMine: m['is_mine'] == true,
+                isRead: m['is_read'] == true,
+                time: time,
+                parcelId: m['parcel_number']?.toString() ?? m['parcel_id']?.toString(),
+                senderName: (m['sender_name'] ?? '').toString(),
+              );
+            }),
+          );
       });
     } catch (_) {}
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     search.dispose();
     super.dispose();
   }
@@ -92,7 +121,10 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
-    if (mounted) setState(() {});
+    if (mounted) {
+      _loadLiveHubPreview();
+      setState(() {});
+    }
   }
 
   @override
@@ -262,11 +294,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.support_agent, color: AppColors.orange, size: 24),
+                const Icon(Icons.warehouse_rounded, color: AppColors.orange, size: 24),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Direct two-way channel connected to Lumora Sorting Hub staff & dispatch.',
+                    'Direct two-way channel connected to your assigned Branch Sorting Hub & dispatch desk.',
                     style: GoogleFonts.inter(
                       color: AppColors.plum,
                       fontWeight: FontWeight.w600,
@@ -274,13 +306,24 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
+                FilledButton.tonal(
+                  onPressed: () {
+                    final hub = conversations.firstWhere(
+                      (c) => c.isHubStaff,
+                      orElse: () => conversations.first,
+                    );
+                    open(hub);
+                  },
+                  child: const Text('Chat Hub'),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 12),
           Center(
             child: Text(
-              'Chat preview · messages stay in this session',
+              'Live Branch Hub Comms · Messages sync directly with Hub Operations',
               style: GoogleFonts.inter(fontSize: 11, color: AppColors.muted),
             ),
           ),

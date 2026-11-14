@@ -61,6 +61,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     try {
       final rawList = await ApiService.instance.fetchMessages(
         parcelId: _currentAttachedParcelId,
+        markRead: true,
       );
 
       if (!mounted) {
@@ -68,59 +69,73 @@ class _ConversationScreenState extends State<ConversationScreen> {
         return;
       }
 
-      if (rawList.isNotEmpty) {
-        final liveMessages = <PreviewMessage>[];
-        int maxId = _lastKnownId;
-        bool hasNewIncoming = false;
+      final hubInfo = ApiService.instance.hubChatInfo;
+      if (hubInfo != null) {
+        final hubTitle = hubInfo['hub_title']?.toString() ?? '';
+        final adminName = hubInfo['admin_name']?.toString() ?? '';
+        final adminEmail = hubInfo['admin_email']?.toString() ?? '';
+        if (hubTitle.isNotEmpty) {
+          widget.conversation.name = hubTitle;
+        }
+        if (adminName.isNotEmpty) {
+          widget.conversation.description = adminEmail.isNotEmpty
+              ? '$adminName · $adminEmail'
+              : adminName;
+        }
+      }
 
-        for (final m in rawList) {
-          final id = m['id'] as int? ?? 0;
-          final text = (m['message'] ?? m['text'] ?? '').toString();
-          final isMine = m['is_mine'] == true;
-          final senderName = (m['sender_name'] ?? '').toString();
-          final parcelId = m['parcel_id']?.toString() ?? m['parcel_number']?.toString();
-          final timeStr = m['created_at']?.toString();
-          final time = timeStr != null
-              ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now())
-              : DateTime.now();
+      final liveMessages = <PreviewMessage>[];
+      int maxId = _lastKnownId;
+      bool hasNewIncoming = false;
 
-          if (id > maxId) {
-            if (_lastKnownId > 0 && !isMine) {
-              hasNewIncoming = true;
-            }
-            maxId = id;
+      for (final m in rawList) {
+        final id = m['id'] as int? ?? 0;
+        final text = (m['message'] ?? m['text'] ?? '').toString();
+        final isMine = m['is_mine'] == true;
+        final isRead = m['is_read'] == true;
+        final senderName = (m['sender_name'] ?? '').toString();
+        final parcelId = m['parcel_number']?.toString() ?? m['parcel_id']?.toString();
+        final timeStr = m['created_at']?.toString();
+        final time = timeStr != null
+            ? (DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now())
+            : DateTime.now();
+
+        if (id > maxId) {
+          if (_lastKnownId > 0 && !isMine) {
+            hasNewIncoming = true;
           }
-
-          liveMessages.add(
-            PreviewMessage(
-              id: id,
-              text: text,
-              isMine: isMine,
-              time: time,
-              parcelId: parcelId,
-              senderName: senderName,
-            ),
-          );
+          maxId = id;
         }
 
-        if (liveMessages.isNotEmpty) {
-          setState(() {
-            widget.conversation.messages
-              ..clear()
-              ..addAll(liveMessages);
-            _lastKnownId = maxId;
-          });
+        liveMessages.add(
+          PreviewMessage(
+            id: id,
+            text: text,
+            isMine: isMine,
+            isRead: isRead,
+            time: time,
+            parcelId: parcelId,
+            senderName: senderName,
+          ),
+        );
+      }
 
-          if (hasNewIncoming) {
-            HapticFeedback.lightImpact();
-            if (scroll.hasClients) {
-              scroll.animateTo(
-                0,
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOut,
-              );
-            }
-          }
+      setState(() {
+        widget.conversation.unread = 0;
+        widget.conversation.messages
+          ..clear()
+          ..addAll(liveMessages);
+        _lastKnownId = maxId;
+      });
+
+      if (hasNewIncoming) {
+        HapticFeedback.lightImpact();
+        if (scroll.hasClients) {
+          scroll.animateTo(
+            0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          );
         }
       }
     } catch (_) {}
@@ -422,14 +437,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Conversation info',
+            tooltip: 'Hub Channel Info',
             icon: const Icon(Icons.info_outline_rounded),
             onPressed: () => showDialog<void>(
               context: context,
               builder: (context) => AlertDialog(
                 title: Text(conversation.name),
-                content: const Text(
-                  'This is a local chat preview. Messages are not delivered to anyone and reset when the app restarts. Long-press a message to reply, copy, edit, or unsend.',
+                content: Text(
+                  'Direct two-way communication channel with your assigned Branch Sorting Hub (${conversation.description}).\n\nMessages sync in real time with the Hub Operations console. You can also attach an active parcel ID for dispatch assistance.',
                 ),
                 actions: [
                   TextButton(
@@ -678,7 +693,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                                             horizontal: 4,
                                           ),
                                           child: Text(
-                                            '${TimeOfDay.fromDateTime(m.time).format(context)}${m.edited && !m.unsent ? ' · Edited' : ''}${m.isMine && !m.unsent ? ' · Local' : ''}',
+                                            '${TimeOfDay.fromDateTime(m.time).format(context)}${m.edited && !m.unsent ? ' · Edited' : ''}${m.isMine && !m.unsent ? (m.isRead ? ' · ✓✓ Read' : ' · ✓ Sent') : ''}',
                                             style: const TextStyle(
                                               fontSize: 9,
                                               color: AppColors.muted,
@@ -781,10 +796,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 scrollDirection: Axis.horizontal,
                 children: [
                   for (final qr in const [
-                    "I'm outside",
-                    "Receiver not answering",
-                    "Wrong address",
-                    "Need help",
+                    "📍 Arrived at customer address",
+                    "📞 Receiver not answering",
+                    "🏠 Wrong / incomplete address",
+                    "📦 Return parcel in hand",
+                    "🏢 Heading back to hub",
                   ])
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
