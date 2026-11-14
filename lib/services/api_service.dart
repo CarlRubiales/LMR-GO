@@ -257,6 +257,11 @@ class ApiService {
     String? municipality,
     String? barangay,
     String? street,
+    String? birthday,
+    String? birthDate,
+    String? dateOfBirth,
+    String? age,
+    String? sex,
   }) async {
     final response = await _post(
       '/rider/register',
@@ -275,6 +280,11 @@ class ApiService {
         'municipality': ?municipality,
         'barangay': ?barangay,
         'street': ?street,
+        'birthday': ?birthday,
+        'birth_date': ?birthDate,
+        'date_of_birth': ?(dateOfBirth ?? birthday ?? birthDate),
+        'age': ?age,
+        'sex': ?sex,
       },
       timeout: const Duration(seconds: 15),
     );

@@ -631,6 +631,11 @@ class MockBackend {
         municipality: payload['municipality'] as String?,
         barangay: payload['barangay'] as String?,
         street: payload['street'] as String?,
+        birthday: payload['birthday'] as String?,
+        birthDate: payload['birth_date'] as String?,
+        dateOfBirth: (payload['date_of_birth'] ?? payload['birthday'] ?? payload['birth_date']) as String?,
+        age: payload['age']?.toString(),
+        sex: payload['sex'] as String?,
       );
     }
   }

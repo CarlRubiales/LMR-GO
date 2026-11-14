@@ -37,8 +37,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   final phoneController = TextEditingController();
   final passwordController = TextEditingController();
   final birthdayController = TextEditingController();
+  final ageController = TextEditingController();
   final streetController = TextEditingController();
   final plateController = TextEditingController();
+
+  DateTime? _selectedBirthDate;
 
   bool isSubmitting = false;
   String? registrationError;
@@ -108,6 +111,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   void initState() {
     super.initState();
     streetController.addListener(_autoSelectHubFromAddress);
+    birthdayController.addListener(_onBirthdayChanged);
     _fetchHubs();
     _loadProvinces();
   }
@@ -298,7 +302,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   @override
+  @override
   void dispose() {
+    streetController.removeListener(_autoSelectHubFromAddress);
+    birthdayController.removeListener(_onBirthdayChanged);
     lastNameController.dispose();
     firstNameController.dispose();
     middleInitialController.dispose();
@@ -306,9 +313,143 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     phoneController.dispose();
     passwordController.dispose();
     birthdayController.dispose();
+    ageController.dispose();
     streetController.dispose();
     plateController.dispose();
     super.dispose();
+  }
+
+  void _onBirthdayChanged() {
+    final text = birthdayController.text.trim();
+    if (text.isEmpty) {
+      if (ageController.text.isNotEmpty) {
+        setState(() {
+          _selectedBirthDate = null;
+          ageController.clear();
+        });
+      }
+      return;
+    }
+
+    final parsed = _parseDate(text);
+    if (parsed != null) {
+      _selectedBirthDate = parsed;
+      final age = _calculateAge(parsed);
+      final ageStr = (age >= 0 && age <= 120) ? '$age' : '';
+      if (ageController.text != ageStr) {
+        setState(() {
+          ageController.text = ageStr;
+        });
+      }
+    } else {
+      if (ageController.text.isNotEmpty) {
+        setState(() {
+          ageController.clear();
+        });
+      }
+    }
+  }
+
+  DateTime? _parseDate(String text) {
+    final clean = text.trim();
+    if (clean.isEmpty) return null;
+
+    final iso = DateTime.tryParse(clean);
+    if (iso != null && iso.year >= 1900 && iso.year <= DateTime.now().year) {
+      return iso;
+    }
+
+    final parts = clean.split(RegExp(r'[\/\-\.]'));
+    if (parts.length == 3) {
+      final p1 = int.tryParse(parts[0]);
+      final p2 = int.tryParse(parts[1]);
+      final p3 = int.tryParse(parts[2]);
+      if (p1 != null && p2 != null && p3 != null) {
+        // MM/DD/YYYY
+        if (p3 >= 1900 && p3 <= DateTime.now().year) {
+          if (p1 > 12 && p1 <= 31 && p2 >= 1 && p2 <= 12) {
+            try {
+              return DateTime(p3, p2, p1);
+            } catch (_) {}
+          } else if (p1 >= 1 && p1 <= 12 && p2 >= 1 && p2 <= 31) {
+            try {
+              return DateTime(p3, p1, p2);
+            } catch (_) {}
+          }
+        }
+        // YYYY/MM/DD
+        if (p1 >= 1900 && p1 <= DateTime.now().year) {
+          if (p2 >= 1 && p2 <= 12 && p3 >= 1 && p3 <= 31) {
+            try {
+              return DateTime(p1, p2, p3);
+            } catch (_) {}
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  int _calculateAge(DateTime birthDate) {
+    final today = DateTime.now();
+    int age = today.year - birthDate.year;
+    if (today.month < birthDate.month ||
+        (today.month == birthDate.month && today.day < birthDate.day)) {
+      age--;
+    }
+    return age;
+  }
+
+  Future<void> _pickBirthday() async {
+    FocusScope.of(context).unfocus();
+
+    final now = DateTime.now();
+    final defaultInitial = DateTime(now.year - 21, now.month, now.day);
+    final initialDate = _selectedBirthDate ?? defaultInitial;
+    final firstDate = DateTime(1940, 1, 1);
+    final lastDate = now;
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate.isAfter(lastDate)
+          ? lastDate
+          : (initialDate.isBefore(firstDate) ? firstDate : initialDate),
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: 'SELECT YOUR DATE OF BIRTH',
+      cancelText: 'CANCEL',
+      confirmText: 'SELECT',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppColors.plum,
+              onPrimary: AppColors.cream,
+              onSurface: AppColors.plum,
+              surface: Colors.white,
+              secondary: AppColors.orange,
+            ),
+            dialogTheme: const DialogThemeData(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+              ),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      _selectedBirthDate = picked;
+      final formatted =
+          '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      birthdayController.text = formatted;
+      final age = _calculateAge(picked);
+      setState(() {
+        ageController.text = age >= 0 ? '$age' : '';
+      });
+    }
   }
 
   Widget field(
@@ -318,6 +459,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     TextEditingController? controller,
     bool obscureText = false,
     TextInputType? keyboardType,
+    bool readOnly = false,
+    VoidCallback? onTap,
+    Widget? suffixIcon,
+    Widget? prefixIcon,
+    String? Function(String?)? validator,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -337,17 +483,30 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             controller: controller,
             obscureText: obscureText,
             keyboardType: keyboardType,
-            style: GoogleFonts.inter(color: AppColors.plum, fontSize: 14),
+            readOnly: readOnly,
+            onTap: onTap,
+            style: GoogleFonts.inter(
+              color: AppColors.plum,
+              fontSize: 14,
+              fontWeight: readOnly && controller == ageController
+                  ? FontWeight.w700
+                  : FontWeight.w400,
+            ),
             decoration: InputDecoration(
               hintText: hint,
+              suffixIcon: suffixIcon,
+              prefixIcon: prefixIcon,
+              filled: readOnly,
+              fillColor: readOnly ? const Color(0xFFF9F6F5) : null,
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
                 vertical: 14,
               ),
             ),
-            validator: required
-                ? (value) => value == null || value.trim().isEmpty ? 'Required' : null
-                : null,
+            validator: validator ??
+                (required
+                    ? (value) => value == null || value.trim().isEmpty ? 'Required' : null
+                    : null),
           ),
         ],
       ),
@@ -768,6 +927,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                                     'email': email,
                                     'phone': phoneController.text.trim(),
                                     'password': passwordController.text.trim(),
+                                    'birthday': birthdayController.text.trim(),
+                                    'birth_date': birthdayController.text.trim(),
+                                    'date_of_birth': birthdayController.text.trim(),
+                                    'age': ageController.text.trim(),
+                                    'sex': sex,
                                     'province': _selectedProvince?.name ?? '',
                                     'municipality': _selectedCity?.name ?? '',
                                     'barangay': _selectedBarangay?.name ?? '',
@@ -1036,17 +1200,76 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             field('Contact no.', hint: '09XX XXX XXXX', required: true, controller: phoneController, keyboardType: TextInputType.phone),
             field('Password', hint: 'At least 6 characters', required: true, controller: passwordController, obscureText: true),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
+                  flex: 3,
                   child: field(
                     'Birthday',
-                    hint: 'MM / DD / YYYY',
+                    hint: 'YYYY-MM-DD',
                     required: true,
                     controller: birthdayController,
+                    readOnly: true,
+                    onTap: _pickBirthday,
+                    suffixIcon: IconButton(
+                      icon: const Icon(
+                        Icons.calendar_month_outlined,
+                        color: AppColors.orange,
+                        size: 20,
+                      ),
+                      onPressed: _pickBirthday,
+                      tooltip: 'Select date of birth',
+                    ),
+                    validator: (val) {
+                      if (val == null || val.trim().isEmpty) {
+                        return 'Birthday is required';
+                      }
+                      final parsed = _parseDate(val);
+                      if (parsed == null) {
+                        return 'Invalid date';
+                      }
+                      final age = _calculateAge(parsed);
+                      if (age < 18) {
+                        return 'Must be at least 18';
+                      }
+                      return null;
+                    },
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(child: field('Age (autogen)', hint: '—')),
+                Expanded(
+                  flex: 2,
+                  child: field(
+                    'Age (autogen)',
+                    hint: '—',
+                    controller: ageController,
+                    readOnly: true,
+                    suffixIcon: const Padding(
+                      padding: EdgeInsets.only(right: 14),
+                      child: Center(
+                        widthFactor: 1,
+                        child: Text(
+                          'yrs',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ),
+                    ),
+                    validator: (val) {
+                      if (val == null || val.trim().isEmpty) {
+                        return 'Select birthday';
+                      }
+                      final a = int.tryParse(val.trim());
+                      if (a == null || a < 18) {
+                        return 'Must be 18+';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
