@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/delivery_request.dart';
 import '../models/delivery_status.dart';
@@ -13,6 +14,31 @@ class MockBackend {
   factory MockBackend() => _instance;
   MockBackend._internal() {
     _initDateParcels();
+    _loadPersistedReturnStates();
+  }
+
+  static const String _keyReturnedToHubIds = 'lumora_returned_to_hub_ids';
+  static const String _keyInRiderHandsIds = 'lumora_in_rider_hands_ids';
+  bool _persistedStateLoaded = false;
+
+  Future<void> _loadPersistedReturnStates() async {
+    if (_persistedStateLoaded) return;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final returned = sp.getStringList(_keyReturnedToHubIds) ?? const <String>[];
+      final inHands = sp.getStringList(_keyInRiderHandsIds) ?? const <String>[];
+      _returnedToHubIds.addAll(returned);
+      _inRiderHandsIds.addAll(inHands.where((id) => !_returnedToHubIds.contains(id)));
+      _persistedStateLoaded = true;
+    } catch (_) {}
+  }
+
+  Future<void> _savePersistedReturnStates() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setStringList(_keyReturnedToHubIds, _returnedToHubIds.toList());
+      await sp.setStringList(_keyInRiderHandsIds, _inRiderHandsIds.toList());
+    } catch (_) {}
   }
 
   static String dateKey(DateTime dt) =>
@@ -392,6 +418,7 @@ class MockBackend {
 
   /// Get parcels assigned to the rider for the selected Run (defaults to Today's Run)
   Future<List<DeliveryRequest>> getTodayRunParcels({DateTime? date}) async {
+    await _loadPersistedReturnStates();
     final targetDate = date ?? selectedDate;
     final key = dateKey(targetDate);
 
@@ -409,8 +436,9 @@ class MockBackend {
           for (int i = 0; i < apiDeliveries.length; i++) {
             final item = apiDeliveries[i];
 
-            // Exclude parcels already returned to hub
-            if (item.stage == DeliveryStage.returnedToHub ||
+            // Exclude any return/refund parcel already resolved or delivered/returned in the hub
+            if (item.isReturnResolvedOrDeliveredInHub ||
+                item.stage == DeliveryStage.returnedToHub ||
                 item.returnStatus == 'returned_to_hub' ||
                 _returnedToHubIds.contains(item.id) ||
                 (item.barcode != null && _returnedToHubIds.contains(item.barcode)) ||
@@ -577,6 +605,10 @@ class MockBackend {
       _runtimeParcels.clear();
       _runtimeParcels.addAll(currentList);
       parcelsNotifier.value = List<DeliveryRequest>.unmodifiable(_runtimeParcels);
+    }
+
+    if (newStage == DeliveryStage.returnedToHub || newStage == DeliveryStage.returningToHub) {
+      await _savePersistedReturnStates();
     }
 
     String? photoBase64;

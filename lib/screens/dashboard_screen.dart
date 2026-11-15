@@ -181,42 +181,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final assignedCount = _parcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).length;
-    final pickedUpCount = _parcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).length;
-    final outForDeliveryCount = _parcels
+    final visibleParcels = _parcels
+        .where((p) => !p.isReturnResolvedOrDeliveredInHub && p.stage != DeliveryStage.returnedToHub)
+        .toList();
+    final assignedCount = visibleParcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).length;
+    final pickedUpCount = visibleParcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).length;
+    final outForDeliveryCount = visibleParcels
         .where((p) => (p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived) && !p.isReturnRefund)
         .length;
-    final deliveredCount = _parcels
+    final deliveredCount = visibleParcels
         .where((p) => (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund)
         .length;
-    final failedCount = _parcels
+    final failedCount = visibleParcels
         .where((p) =>
             p.isReturnRefund ||
             p.stage == DeliveryStage.failed ||
-            p.stage == DeliveryStage.returningToHub ||
-            p.stage == DeliveryStage.returnedToHub)
+            p.stage == DeliveryStage.returningToHub)
         .length;
-    final rescheduledCount = _parcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).length;
+    final rescheduledCount = visibleParcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).length;
 
     // Filtered manifest
     final filtered = switch (_statusFilter) {
-      1 => _parcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).toList(),
-      2 => _parcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).toList(),
-      3 => _parcels
+      1 => visibleParcels.where((p) => p.stage == DeliveryStage.accepted && !p.isReturnRefund).toList(),
+      2 => visibleParcels.where((p) => p.stage == DeliveryStage.pickedUp && !p.isReturnRefund).toList(),
+      3 => visibleParcels
           .where((p) => (p.stage == DeliveryStage.outForDelivery || p.stage == DeliveryStage.arrived) && !p.isReturnRefund)
           .toList(),
-      4 => _parcels
+      4 => visibleParcels
           .where((p) => (p.stage == DeliveryStage.delivered || p.stage == DeliveryStage.completed) && !p.isReturnRefund)
           .toList(),
-      5 => _parcels
+      5 => visibleParcels
           .where((p) =>
               p.isReturnRefund ||
               p.stage == DeliveryStage.failed ||
-              p.stage == DeliveryStage.returningToHub ||
-              p.stage == DeliveryStage.returnedToHub)
+              p.stage == DeliveryStage.returningToHub)
           .toList(),
-      6 => _parcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).toList(),
-      _ => _parcels,
+      6 => visibleParcels.where((p) => p.stage == DeliveryStage.rescheduled && !p.isReturnRefund).toList(),
+      _ => visibleParcels,
     };
 
     // Calculate total COD collected today to remit
@@ -751,7 +752,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           // 7. Assigned Parcel Manifest List
           SectionHeader(
-            title: 'Run Manifest (${_parcels.length})',
+            title: 'Run Manifest (${visibleParcels.length})',
             action: _statusFilter != 0 ? 'Show all' : null,
             onTap: () => setState(() => _statusFilter = 0),
           ),
@@ -763,7 +764,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Row(
               children: [
                 _FilterChip(
-                  label: 'All (${_parcels.length})',
+                  label: 'All (${visibleParcels.length})',
                   isSelected: _statusFilter == 0,
                   onTap: () => setState(() => _statusFilter = 0),
                 ),

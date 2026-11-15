@@ -121,11 +121,13 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       case 3: // Return / Refund
       default:
         base = _allParcels.where((p) {
+          if (p.isReturnResolvedOrDeliveredInHub || p.stage == DeliveryStage.returnedToHub) {
+            return false;
+          }
           return p.isReturnRefund ||
               p.stage == DeliveryStage.failed ||
               p.stage == DeliveryStage.rescheduled ||
-              p.stage == DeliveryStage.returningToHub ||
-              p.stage == DeliveryStage.returnedToHub;
+              p.stage == DeliveryStage.returningToHub;
         }).toList();
         break;
     }
@@ -158,11 +160,13 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       case 3:
       default:
         return _allParcels.where((p) {
+          if (p.isReturnResolvedOrDeliveredInHub || p.stage == DeliveryStage.returnedToHub) {
+            return false;
+          }
           return p.isReturnRefund ||
               p.stage == DeliveryStage.failed ||
               p.stage == DeliveryStage.rescheduled ||
-              p.stage == DeliveryStage.returningToHub ||
-              p.stage == DeliveryStage.returnedToHub;
+              p.stage == DeliveryStage.returningToHub;
         }).length;
     }
   }

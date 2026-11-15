@@ -96,8 +96,64 @@ class DeliveryRequest {
   bool get isItemInHand => stage == DeliveryStage.returningToHub;
   bool get isReturnPendingPickup =>
       isReturnRefund &&
+      !isReturnResolvedOrDeliveredInHub &&
       stage != DeliveryStage.returningToHub &&
       stage != DeliveryStage.returnedToHub;
+
+  /// True if a Return / Refund case has already been resolved or delivered/returned in the hub
+  bool get isReturnResolvedOrDeliveredInHub {
+    if (stage == DeliveryStage.returnedToHub) return true;
+    final statusLower = (returnStatus ?? '').trim().toLowerCase();
+    if (statusLower == 'returned_to_hub' ||
+        statusLower == 'received_at_hub' ||
+        statusLower == 'hub_received' ||
+        statusLower == 'returned' ||
+        statusLower == 'approved' ||
+        statusLower == 'rejected' ||
+        statusLower == 'resolved' ||
+        statusLower == 'completed' ||
+        statusLower == 'cancelled' ||
+        statusLower == 'refunded' ||
+        statusLower == 'under_review') {
+      return true;
+    }
+    final meta = metadata ?? const <String, dynamic>{};
+    if (meta['is_return_resolved'] == true) return true;
+    if (meta['return_resolved_at'] != null &&
+        meta['return_resolved_at'].toString().trim().isNotEmpty) {
+      return true;
+    }
+    if (meta['returned_to_hub_at'] != null &&
+        meta['returned_to_hub_at'].toString().trim().isNotEmpty) {
+      return true;
+    }
+    final stageMeta = (meta['return_stage'] ?? '').toString().trim().toLowerCase();
+    if (stageMeta == 'returned_to_hub' ||
+        stageMeta == 'received_at_hub' ||
+        stageMeta == 'resolved' ||
+        stageMeta == 'completed' ||
+        stageMeta == 'cancelled') {
+      return true;
+    }
+    final resMeta = (meta['return_resolution'] ?? '').toString().trim().toLowerCase();
+    if (resMeta.contains('returned to hub') ||
+        resMeta.contains('approve refund') ||
+        resMeta.contains('rejected') ||
+        resMeta.contains('cancelled') ||
+        resMeta.contains('refunded') ||
+        resMeta.contains('under review') ||
+        resMeta.contains('received at hub')) {
+      return true;
+    }
+    if (isReturnRefund &&
+        (stage == DeliveryStage.delivered || stage == DeliveryStage.completed) &&
+        statusLower != 'approved_for_pickup' &&
+        statusLower != 'in_rider_hands' &&
+        statusLower != 'in_transit_to_hub') {
+      return true;
+    }
+    return false;
+  }
 
   // Effective reason and details for display
   String get effectiveReturnReason {
@@ -283,10 +339,28 @@ class DeliveryRequest {
 
     final returnStatusVal = json['return_status']?.toString() ??
         rawMeta['return_status']?.toString();
+    final returnStatusLower = (returnStatusVal ?? '').trim().toLowerCase();
+    final hasResolvedTimestamp = (rawMeta['return_resolved_at'] != null &&
+            rawMeta['return_resolved_at'].toString().trim().isNotEmpty) ||
+        (rawMeta['returned_to_hub_at'] != null &&
+            rawMeta['returned_to_hub_at'].toString().trim().isNotEmpty) ||
+        rawMeta['is_return_resolved'] == true;
 
-    if (returnStatusVal == 'returned_to_hub') {
+    if (returnStatusLower == 'returned_to_hub' ||
+        returnStatusLower == 'received_at_hub' ||
+        returnStatusLower == 'hub_received' ||
+        returnStatusLower == 'returned' ||
+        returnStatusLower == 'approved' ||
+        returnStatusLower == 'rejected' ||
+        returnStatusLower == 'resolved' ||
+        returnStatusLower == 'completed' ||
+        returnStatusLower == 'cancelled' ||
+        returnStatusLower == 'refunded' ||
+        returnStatusLower == 'under_review' ||
+        hasResolvedTimestamp) {
       stage = DeliveryStage.returnedToHub;
-    } else if (returnStatusVal == 'in_rider_hands' && stage != DeliveryStage.returnedToHub) {
+    } else if ((returnStatusLower == 'in_rider_hands' || returnStatusLower == 'in_transit_to_hub') &&
+        stage != DeliveryStage.returnedToHub) {
       stage = DeliveryStage.returningToHub;
     }
 
