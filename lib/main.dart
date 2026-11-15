@@ -153,6 +153,7 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
   }
 
   void logout() {
+    OfflineQueueService.instance.clearQueue();
     ApiService.instance.logout();
     MockBackend().stopAutoSync();
     MockBackend().reset();

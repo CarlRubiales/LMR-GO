@@ -80,5 +80,11 @@ class OfflineQueueService {
       _isFlushing = false;
     }
   }
+
+  Future<void> clearQueue() async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.remove(_keyQueue);
+    pendingCount.value = 0;
+  }
 }
 
