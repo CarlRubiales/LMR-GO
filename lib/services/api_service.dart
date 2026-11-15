@@ -97,6 +97,10 @@ class ApiService {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
+        if (_currentUser?['email'] != null && _currentUser!['email'].toString().isNotEmpty)
+          'X-Rider-Email': _currentUser!['email'].toString(),
+        if (_currentUser?['name'] != null && _currentUser!['name'].toString().isNotEmpty)
+          'X-Rider-Name': _currentUser!['name'].toString(),
       };
 
   /// Low-level GET request with automatic fallback between Wi-Fi LAN IP and USB reverse
@@ -187,12 +191,18 @@ class ApiService {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       _token = data['token'] as String?;
       _currentUser = data['user'] as Map<String, dynamic>?;
+      if (_currentUser != null) {
+        _currentUser!['availability'] = 'online';
+      }
 
       final sp = await SharedPreferences.getInstance();
       if (_token != null) await sp.setString(_keyToken, _token!);
       if (_currentUser != null) {
         await sp.setString(_keyUser, jsonEncode(_currentUser));
       }
+
+      // Ensure live Online availability is synced across both Local & Cloud servers on login
+      setAvailability(true);
 
       return data;
     } else {
@@ -310,19 +320,46 @@ class ApiService {
     throw Exception('Failed to load hubs');
   }
 
-  /// Logout and revoke current token
+  /// Logout, mark rider offline on all servers, and revoke current token
   Future<void> logout() async {
-    if (_token != null) {
-      try {
-        await _post('/rider/logout', timeout: const Duration(seconds: 3));
-      } catch (_) {}
-    }
+    final email = _currentUser?['email']?.toString();
+    final name = _currentUser?['name']?.toString();
+    final headersSnapshot = Map<String, String>.from(_headers);
 
     _token = null;
     _currentUser = null;
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_keyToken);
     await sp.remove(_keyUser);
+
+    if (email != null && email.isNotEmpty) {
+      final payload = jsonEncode({
+        'available': false,
+        'availability': 'offline',
+        'rider_email': email,
+        'rider_name': name ?? '',
+      });
+      for (final target in {baseUrl, 'https://logistics.lumora.party/api/v1'}) {
+        try {
+          http
+              .post(
+                Uri.parse('$target/rider/availability'),
+                headers: headersSnapshot,
+                body: payload,
+              )
+              .timeout(const Duration(seconds: 4))
+              .catchError((_) => http.Response('', 500));
+          http
+              .post(
+                Uri.parse('$target/rider/logout'),
+                headers: headersSnapshot,
+                body: payload,
+              )
+              .timeout(const Duration(seconds: 4))
+              .catchError((_) => http.Response('', 500));
+        } catch (_) {}
+      }
+    }
   }
 
   /// Fetch authenticated rider details
@@ -343,11 +380,46 @@ class ApiService {
     return _currentUser;
   }
 
-  /// Update online / offline availability
+  /// Update online / offline availability across both active server and Cloud Logistics
   Future<bool> setAvailability(bool online) async {
     if (!isAuthenticated) return online;
+    final email = _currentUser?['email']?.toString();
+    final name = _currentUser?['name']?.toString();
+    final statusStr = online ? 'online' : 'offline';
+
+    if (_currentUser != null) {
+      _currentUser!['availability'] = statusStr;
+      SharedPreferences.getInstance().then((sp) {
+        if (_currentUser != null) {
+          sp.setString(_keyUser, jsonEncode(_currentUser));
+        }
+      });
+    }
+
+    final bodyPayload = <String, dynamic>{
+      'available': online,
+      'availability': statusStr,
+      if (email != null && email.isNotEmpty) 'rider_email': email,
+      if (name != null && name.isNotEmpty) 'rider_name': name,
+    };
+
+    // Also mirror directly to Cloud Logistics so https://logistics.lumora.party/riders updates immediately
+    const cloudBase = 'https://logistics.lumora.party/api/v1';
+    if (!baseUrl.contains('logistics.lumora.party')) {
+      try {
+        http
+            .post(
+              Uri.parse('$cloudBase/rider/availability'),
+              headers: _headers,
+              body: jsonEncode(bodyPayload),
+            )
+            .timeout(const Duration(seconds: 4))
+            .catchError((_) => http.Response('', 500));
+      } catch (_) {}
+    }
+
     try {
-      final res = await _post('/rider/availability', body: {'available': online});
+      final res = await _post('/rider/availability', body: bodyPayload);
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return data['is_online'] as bool? ?? online;

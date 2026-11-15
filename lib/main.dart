@@ -109,6 +109,9 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
     login = widget.startAtLogin;
     signedOut = widget.startAtLogin;
     _syncAccount();
+    if (ApiService.instance.isAuthenticated) {
+      ApiService.instance.setAvailability(available);
+    }
   }
 
   @override
@@ -120,6 +123,7 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && ApiService.instance.isAuthenticated) {
+      ApiService.instance.setAvailability(available);
       MockBackend().getTodayRunParcels();
       OfflineQueueService.instance.flushQueue();
     }
@@ -138,6 +142,12 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
       account.profile['Email'] = user['email'] as String? ?? '';
       if (user['phone'] != null) {
         account.profile['Mobile number'] = user['phone'] as String;
+      }
+      final rawAvail = user['availability']?.toString().toLowerCase();
+      if (rawAvail == 'offline') {
+        available = false;
+      } else if (rawAvail == 'online' || rawAvail == 'available') {
+        available = true;
       }
     }
   }
@@ -285,11 +295,13 @@ class _RiderShellState extends State<RiderShell> with WidgetsBindingObserver {
           MockBackend().reset();
           setState(() {
             _syncAccount();
+            available = true;
             conversations = createPreviewConversations();
             login = false;
             signedOut = false;
             tab = 0;
           });
+          ApiService.instance.setAvailability(true);
           MockBackend().getTodayRunParcels();
           MockBackend().startAutoSync();
           _syncHubChatPreview();
